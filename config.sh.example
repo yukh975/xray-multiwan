@@ -1,41 +1,47 @@
 # shellcheck shell=bash
 #
+# config.sh — unified config file sourced by install.sh, diag.sh, migrate.sh.
 # config.sh — единый конфиг для install.sh, diag.sh, migrate.sh.
-# Unified config file sourced by install.sh, diag.sh, migrate.sh.
 #
-# Правь этот файл. Скрипты сами его читают.
 # Edit this file. The scripts source it.
+# Правь этот файл. Скрипты сами его читают.
 #
 # =============================================================================
-# !!!  ПРАВИТЬ ПЕРЕД ПЕРВЫМ ЗАПУСКОМ  /  EDIT BEFORE FIRST RUN  !!!
+# !!!  EDIT BEFORE FIRST RUN  /  ПРАВИТЬ ПЕРЕД ПЕРВЫМ ЗАПУСКОМ  !!!
 # =============================================================================
 #
-# PARENT_IF — имя родительского сетевого интерфейса в контейнере, поверх
-#             которого создаются macvlan-подинтерфейсы. Узнать текущее имя
-#             можно командой `ip -br link show` (обычно eth0).
-#             Parent interface inside the container on top of which macvlan
-#             sub-interfaces are created. Check with `ip -br link show`
-#             (usually eth0).
+# PARENT_IF — parent network interface inside the container on top of which
+#             macvlan sub-interfaces are created. Check the current name with
+#             `ip -br link show` (usually eth0).
+#             Имя родительского сетевого интерфейса в контейнере, поверх
+#             которого создаются macvlan-подинтерфейсы. Узнать имя можно
+#             командой `ip -br link show` (обычно eth0).
 #
-# NETMASK_BITS — длина маски подсети (обычно 24, может быть 28 и т.п.).
-#             Prefix length for the subnet where PARENT_IF and macvlan IPs
+# NETMASK_BITS — prefix length for the subnet where PARENT_IF and macvlan IPs
 #             live (commonly 24, may be 28, etc.).
+#             Длина маски подсети, в которой живут PARENT_IF и macvlan-IP
+#             (обычно 24, может быть 28 и т.п.).
 #
-# COUNTRIES — список WAN-выходов в формате "код:IP:fwmark":
+# COUNTRIES — list of WAN exits in "code:IP:fwmark" format:
+#   * code    — short exit name (wan1, wan2, ...). Matches the filenames
+#               /etc/tun2socks/<code>.yaml, xray@<code>.service,
+#               tun2socks@<code>.service, tun<code>, macvlan xray-<code>.
+#   * IP      — macvlan address in the same subnet as PARENT_IF. A client
+#               sets this IP as its default gateway.
+#   * fwmark  — unique iptables mark (commonly 100+) for policy routing.
+#
+#   Список WAN-выходов в формате "код:IP:fwmark":
 #   * код     — короткое имя выхода (wan1, wan2, ...). Совпадает с именами
 #               /etc/tun2socks/<код>.yaml, xray@<код>.service,
 #               tun2socks@<код>.service, tun<код>, macvlan xray-<код>.
-#   * IP      — адрес macvlan-интерфейса в той же подсети, что и PARENT_IF.
-#               Клиент указывает этот IP как default gateway.
+#   * IP      — адрес macvlan в той же подсети, что и PARENT_IF. Клиент
+#               указывает этот IP как default gateway.
 #   * fwmark  — уникальная метка iptables (обычно 100+) для policy routing.
 #
-#   List of WAN exits in "code:IP:fwmark" format. Code matches tun2socks
-#   config / service instance / macvlan name. IP is the macvlan address a
-#   client sets as its default gateway. fwmark is any unique integer.
-#
-#   Имя переменной COUNTRIES осталось исторически; концептуально это
-#   список WAN-выходов / xray-инстансов. The variable name is historical;
-#   conceptually these are WAN exits / xray instances.
+#   The variable name COUNTRIES is historical; conceptually these are WAN
+#   exits / xray instances.
+#   Имя переменной COUNTRIES осталось исторически; концептуально это список
+#   WAN-выходов / xray-инстансов.
 #
 PARENT_IF="eth0"
 NETMASK_BITS="24"
@@ -46,8 +52,8 @@ COUNTRIES=(
     "wan3:192.168.0.234:102"
 )
 
-# XRAY_CONFDIR / TUN2SOCKS_CONFDIR — каталоги с конфигами соответствующих
-#   сервисов. Обычно не требуют правки.
-#   Directories for the respective service configs. Usually no need to change.
+# XRAY_CONFDIR / TUN2SOCKS_CONFDIR — directories for the respective service
+#   configs. Usually no need to change.
+#   Каталоги с конфигами соответствующих сервисов. Обычно править не нужно.
 XRAY_CONFDIR="/etc/xray"
 TUN2SOCKS_CONFDIR="/etc/tun2socks"
