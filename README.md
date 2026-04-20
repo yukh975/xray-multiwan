@@ -290,7 +290,32 @@ Open `https://api.ipify.org` in a browser — you should see a French IP. Switch
 
 ## Diagnostics
 
-Where to look when something breaks:
+### diag.sh
+
+The fastest way to check a live system. `diag.sh` walks through every layer of the setup and prints a green ✓ / yellow ! / red ✗ line per check, plus a summary at the end.
+
+```bash
+bash diag.sh          # full report
+bash diag.sh --quiet  # summary only
+```
+
+Exit code: `0` if everything is green, `1` if any check failed. The `COUNTRIES` array at the top of `diag.sh` must match `install.sh` — `migrate.sh` keeps them in sync automatically.
+
+What it checks:
+
+- **sysctl** — `ip_forward`, `rp_filter`, `arp_ignore`, `arp_announce`, plus presence of `/etc/sysctl.d/99-*.conf` (so settings survive reboot).
+- **Routing tables** — every `via_<code>` entry is present in `/etc/iproute2/rt_tables`.
+- **Scripts** — `/usr/local/sbin/setup-macvlan.sh` and `/usr/local/sbin/setup-routing.sh` exist and are executable.
+- **systemd units** — `setup-macvlan.service`, `setup-routing.service`, `xray@<code>`, `tun2socks@<code>` all enabled and active, plus the `tun2socks@` `link-up.conf` drop-in.
+- **Interfaces** — parent (`global`) exists; each `xray-<code>` is macvlan, has its own MAC (distinct from the parent — critical for ARP), has the expected IP, is `UP`, has `rp_filter=0`; each `tun<code>` is up with `rp_filter=0`.
+- **ip rule** — fwmark → table routing rule present for every country.
+- **Routing per table** — `via_<code>` has a default route through the right `tun<code>`.
+- **iptables** — mangle `-i xray-<code> → MARK` and NAT `-o tun<code> → MASQUERADE` rules present.
+- **Live connectivity** — `curl --interface tun<code> https://api.ipify.org` for each country, plus a check that all exit IPs are distinct.
+
+### Manual commands
+
+If `diag.sh` isn't enough, drop to the raw commands it wraps:
 
 ```bash
 # Are all macvlan/tun interfaces up:
@@ -317,13 +342,6 @@ systemctl status tun2socks@fr tun2socks@se tun2socks@fi
 # Where packets actually go:
 tcpdump -ni xray-fr -c 10 'host <client-IP> and not port 22'
 tcpdump -ni tunfr  -c 10 'host <client-IP> and not port 22'
-```
-
-Or just run the included diagnostic script:
-
-```bash
-bash diag.sh          # full report
-bash diag.sh --quiet  # summary only
 ```
 
 ## Re-running install.sh on a live system
@@ -398,19 +416,66 @@ Or — simpler — edit the `COUNTRIES` array in `install.sh` and re-run it. It'
 
 ## Migration to a new address plan
 
-`migrate.sh` moves the whole installation to a new subnet (e.g. when the provider changes your IP block). New-addressing parameters live in the `NEW_*` block at the top of the script.
+Use `migrate.sh` when the whole subnet changes — your provider shuffles IPs, or you move the container to a different bridge with a different address range. It rewires xray configs, tun2socks configs, `install.sh`, `diag.sh`, and the live macvlan interfaces in one pass.
 
-What it does:
+### Configuration
 
-1. Verifies that `global` is already on the new subnet (if not, it prints the `pct set` command to run on the PVE host).
-2. Backs configs up to `/root/migrate-backup-<timestamp>/`.
-3. Updates `listen` in xray configs and `proxy: socks5://...` in tun2socks configs.
-4. Updates `COUNTRIES` and `NETMASK_BITS` in `install.sh` and `diag.sh`.
-5. Removes the old IPs from macvlan interfaces.
-6. Restarts xray, runs `install.sh` (which regenerates everything), runs `diag.sh`.
+Edit the `NEW_*` block at the top of `migrate.sh`:
 
-Dry run:
+```bash
+NEW_PARENT_IP="192.168.1.20"
+NEW_NETMASK_BITS="28"
+
+NEW_COUNTRIES=(
+    "fr:192.168.1.21:100"
+    "se:192.168.1.22:101"
+    "fi:192.168.1.23:102"
+)
+```
+
+- `NEW_PARENT_IP` / `NEW_NETMASK_BITS` — the new address and prefix on `global`. Must match what you configured on the PVE host side.
+- `NEW_COUNTRIES` — same `code:IP:mark` format as `install.sh`. Country codes and fwmarks stay the same; only IPs change.
+
+### Precondition: change the IP on the PVE host first
+
+The script **will not** change the `global` IP for you — it only verifies the new address is already in place. On the PVE host, before running the script:
+
+```bash
+pct set <VMID> -net0 name=global,bridge=<...>,ip=192.168.1.20/28,gw=<new-gw>
+pct reboot <VMID>
+```
+
+Then, inside the container, run:
+
+```bash
+bash migrate.sh --dry-run   # preview every change
+bash migrate.sh             # apply
+```
+
+If `global` isn't on the expected subnet yet, the script stops with the exact `pct set` command to run.
+
+### What it does (in order)
+
+1. **Checks** — `global` is on `NEW_PARENT_IP/NEW_NETMASK_BITS`; `install.sh`, `diag.sh` exist at the expected paths (`/root/files/` by default, override via `INSTALL_SH=` / `DIAG_SH=`).
+2. **Backup** — `/etc/xray/<code>.json`, `/etc/tun2socks/<code>.yaml`, `install.sh`, `diag.sh` are copied to `/root/migrate-backup-<YYYYMMDD-HHMMSS>/`.
+3. **xray configs** — rewrites the `"listen"` field in each `/etc/xray/<code>.json` to the new per-country IP.
+4. **tun2socks configs** — rewrites `proxy: socks5://<old-ip>:10808` to the new IP in each `/etc/tun2socks/<code>.yaml`.
+5. **install.sh / diag.sh** — rewrites the `COUNTRIES` array and `NETMASK_BITS` value in both scripts using `awk` (old block removed, new block inserted in place).
+6. **Strip old IPs** — any address still sitting on `xray-<code>` interfaces that isn't in the new plan gets removed with `ip addr del`.
+7. **Restart xray** — `xray@<code>` reloads with the new `listen` address.
+8. **Run install.sh** — regenerates `/usr/local/sbin/setup-*.sh` and systemd units, restarts all services, saves iptables.
+9. **Run diag.sh** — prints a final report so you see immediately whether the migration landed cleanly.
+
+### What it does NOT do
+
+- Does **not** change the IP on `global` itself (you do that on the PVE host).
+- Does **not** clean up stale routing-table entries in `/etc/iproute2/rt_tables` (they're harmless, keyed by fwmark).
+- Does **not** remove old macvlan interfaces whose codes no longer exist in `NEW_COUNTRIES` — only IPs are stripped.
+
+### Dry run
 
 ```bash
 bash migrate.sh --dry-run
 ```
+
+Prints every file it would write and every command it would run, without touching anything. Preconditions (parent IP, script paths) are still enforced.
