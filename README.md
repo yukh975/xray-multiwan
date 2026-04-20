@@ -18,17 +18,17 @@ Client (192.168.0.100)
   │
   │ gateway = 192.168.0.232 (or .233, .234)
   ↓
-┌─────────────────────────────────────────────────┐
-│ Container (ALT Linux / Debian)                  │
-│                                                 │
-│ eth0 (192.168.0.230) ─ physical veth          │
-│   ├─ xray-wan1 (192.168.0.232) ─ macvlan          │
-│   │     └→ xray@wan1 socks5 :10808 ─→ tunwan1 ─→ out    │
-│   ├─ xray-wan2 (192.168.0.233) ─ macvlan          │
-│   │     └→ xray@wan2 socks5 :10808 ─→ tunwan2 ─→ out    │
-│   └─ xray-wan3 (192.168.0.234) ─ macvlan          │
-│         └→ xray@wan3 socks5 :10808 ─→ tunwan3 ─→ out    │
-└─────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────┐
+│ Container (ALT Linux / Debian)                         │
+│                                                        │
+│ eth0 (192.168.0.230) ─ physical veth                   │
+│   ├─ xray-wan1 (192.168.0.232) ─ macvlan               │
+│   │     └→ xray@wan1 socks5 :10808 ─→ tunwan1 ─→ out   │
+│   ├─ xray-wan2 (192.168.0.233) ─ macvlan               │
+│   │     └→ xray@wan2 socks5 :10808 ─→ tunwan2 ─→ out   │
+│   └─ xray-wan3 (192.168.0.234) ─ macvlan               │
+│         └→ xray@wan3 socks5 :10808 ─→ tunwan3 ─→ out   │
+└────────────────────────────────────────────────────────┘
 ```
 
 **How gateway differentiation works:**
