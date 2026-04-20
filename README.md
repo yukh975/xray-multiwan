@@ -453,7 +453,7 @@ Use `migrate.sh` when the whole subnet changes — your provider shuffles IPs, o
 
 ### Configuration
 
-There is nothing to edit in `migrate.sh` itself — it reads the target plan from [`config.sh`](config.sh). Edit `config.sh` to reflect the new state (new `NETMASK_BITS` and new per-exit IPs in `COUNTRIES`), then run `migrate.sh`. Exit codes and fwmarks stay the same; only IPs and the prefix change.
+There is nothing to edit in `migrate.sh` itself — it reads the target plan from [`config.sh`](config.sh). Edit `config.sh` to reflect the new state (new `NETMASK_BITS` and new per-exit IPs — each exit is an arbitrary xray outbound, not necessarily tied to a country), then run `migrate.sh`. Exit codes and fwmarks stay the same; only IPs and the prefix change.
 
 ### Precondition: change the IP on the PVE host first
 
