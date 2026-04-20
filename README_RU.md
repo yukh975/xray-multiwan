@@ -64,8 +64,8 @@
 Все настройки живут в [`config.sh`](config.sh), который `install.sh`, `diag.sh` и `migrate.sh` читают через `source`. Правится в одном месте:
 
 ```bash
-PARENT_IF="${PARENT_IF:-global}"        # родительский интерфейс (eth0 / global / ...)
-NETMASK_BITS="${NETMASK_BITS:-24}"      # длина маски подсети
+PARENT_IF="global"                      # родительский интерфейс (eth0 / global / ...)
+NETMASK_BITS="24"                       # длина маски подсети
 
 COUNTRIES=(
     "fr:192.168.0.232:100"              # код:IP:fwmark
@@ -75,12 +75,6 @@ COUNTRIES=(
 ```
 
 Каждая запись в `COUNTRIES` — это WAN-выход: `код` совпадает с именем `/etc/tun2socks/<код>.yaml`, `xray@<код>.service`, `tun<код>` и `xray-<код>`; `IP` — адрес macvlan, который клиент ставит как шлюз по умолчанию; `fwmark` — любое уникальное число (по соглашению 100+).
-
-Переменные окружения переопределяют значения из файла для разовых запусков:
-
-```bash
-PARENT_IF=eth0 bash install.sh
-```
 
 ## Удаление
 

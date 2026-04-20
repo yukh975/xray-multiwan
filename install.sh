@@ -21,7 +21,7 @@ set -uo pipefail
 # ---- unified config ----
 # All tunables (PARENT_IF, NETMASK_BITS, COUNTRIES) live in config.sh next
 # to this script. Edit config.sh, not this file.
-# Override per-run via env: PARENT_IF=eth0 CONFIG_SH=/path/config.sh bash install.sh
+# To use a different config file: CONFIG_SH=/path/config.sh bash install.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_SH="${CONFIG_SH:-$SCRIPT_DIR/config.sh}"

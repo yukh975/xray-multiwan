@@ -33,12 +33,8 @@
 #   config / service instance / macvlan name. IP is the macvlan address a
 #   client sets as its default gateway. fwmark is any unique integer.
 #
-# Переменные окружения имеют приоритет — можно разово переопределить:
-#   PARENT_IF=eth0 bash install.sh
-# Env variables override file values — useful for one-off runs.
-
-PARENT_IF="${PARENT_IF:-global}"
-NETMASK_BITS="${NETMASK_BITS:-24}"
+PARENT_IF="global"
+NETMASK_BITS="24"
 
 COUNTRIES=(
     "fr:192.168.0.232:100"

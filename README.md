@@ -64,8 +64,8 @@ Client (192.168.0.245)
 All tunables live in [`config.sh`](config.sh), sourced by `install.sh`, `diag.sh` and `migrate.sh`. Edit it in one place:
 
 ```bash
-PARENT_IF="${PARENT_IF:-global}"        # parent interface (eth0 / global / ...)
-NETMASK_BITS="${NETMASK_BITS:-24}"      # subnet prefix length
+PARENT_IF="global"                      # parent interface (eth0 / global / ...)
+NETMASK_BITS="24"                       # subnet prefix length
 
 COUNTRIES=(
     "fr:192.168.0.232:100"              # code:IP:fwmark
@@ -75,12 +75,6 @@ COUNTRIES=(
 ```
 
 Each `COUNTRIES` entry is a WAN exit: `code` matches `/etc/tun2socks/<code>.yaml`, `xray@<code>.service`, `tun<code>` and `xray-<code>`; `IP` is the macvlan address the client sets as its default gateway; `fwmark` is any unique integer (convention: 100+).
-
-Env vars override the file values for one-off runs:
-
-```bash
-PARENT_IF=eth0 bash install.sh
-```
 
 ## Uninstall
 

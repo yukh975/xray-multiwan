@@ -272,7 +272,7 @@ update_config_sh() {
     awk -v new_mask="$NEW_NETMASK_BITS" '
         BEGIN { in_countries = 0 }
         /^NETMASK_BITS=/ {
-            print "NETMASK_BITS=\"${NETMASK_BITS:-" new_mask "}\""
+            print "NETMASK_BITS=\"" new_mask "\""
             next
         }
         /^COUNTRIES=\(/ {
