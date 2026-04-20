@@ -91,6 +91,11 @@ HELP
     esac
 done
 
+if [ "$(id -u)" -ne 0 ]; then
+    echo "$(t "Must run as root" "Запускать от root")" >&2
+    exit 1
+fi
+
 # ---- color output ----
 
 if [ -t 1 ] && [ -n "${TERM:-}" ] && [ "$TERM" != "dumb" ]; then
@@ -429,12 +434,6 @@ run_fix() {
         echo
         echo "$(t "--fix: install.sh not found at $INSTALL_SH (override with INSTALL_SH=...)" \
                "--fix: install.sh не найден по пути $INSTALL_SH (переопредели через INSTALL_SH=...)")" >&2
-        return 1
-    fi
-    if [ "$(id -u)" -ne 0 ]; then
-        echo
-        echo "$(t "--fix: must be root to run install.sh --install" \
-               "--fix: для запуска install.sh --install нужен root")" >&2
         return 1
     fi
     echo

@@ -192,9 +192,6 @@ remove_file() {
 }
 
 require_root() {
-    if [ "$DRY_RUN" -eq 1 ]; then
-        return 0
-    fi
     [ "$(id -u)" -eq 0 ] || die "$(t "Must run as root" "Запускать от root")"
 }
 

@@ -122,7 +122,6 @@ run() {
 # ---- checks ----
 
 require_root() {
-    [ "$DRY_RUN" -eq 1 ] && return 0
     [ "$(id -u)" -eq 0 ] || die "$(t "run as root" "запускать от root")"
 }
 
