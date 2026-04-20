@@ -61,7 +61,13 @@ Client (192.168.0.100)
 
 ## Before first run: edit `config.sh`
 
-All tunables live in [`config.sh`](config.sh), sourced by `install.sh`, `diag.sh` and `migrate.sh`. Edit it in one place:
+The repo ships [`config.sh.example`](config.sh.example); the real `config.sh` is gitignored. Copy the template and edit your copy:
+
+```bash
+cp config.sh.example config.sh
+```
+
+All tunables live in `config.sh`, sourced by `install.sh`, `diag.sh` and `migrate.sh`. Edit it in one place:
 
 ```bash
 PARENT_IF="eth0"                      # parent interface (e.g. eth0)

@@ -61,7 +61,13 @@
 
 ## Перед первым запуском: правим `config.sh`
 
-Все настройки живут в [`config.sh`](config.sh), который `install.sh`, `diag.sh` и `migrate.sh` читают через `source`. Правится в одном месте:
+В репозитории лежит шаблон [`config.sh.example`](config.sh.example); реальный `config.sh` в `.gitignore`. Скопируй шаблон и правь копию:
+
+```bash
+cp config.sh.example config.sh
+```
+
+Все настройки живут в `config.sh`, который `install.sh`, `diag.sh` и `migrate.sh` читают через `source`. Правится в одном месте:
 
 ```bash
 PARENT_IF="eth0"                      # родительский интерфейс (e.g. eth0)
