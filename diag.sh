@@ -15,6 +15,7 @@
 # Usage:
 #   bash diag.sh
 #   bash diag.sh --quiet    # summary only
+#   bash diag.sh --fix      # if any FAIL found, run install.sh --install
 #
 # Exit code:
 #   0 — all good
@@ -49,10 +50,13 @@ t() {
 }
 
 QUIET=0
+FIX=0
+INSTALL_SH="${INSTALL_SH:-$SCRIPT_DIR/install.sh}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
         -q|--quiet) QUIET=1; shift ;;
+        -f|--fix)   FIX=1;   shift ;;
         -h|--help)
             if [ "$LANG_CODE" = ru ]; then
                 cat <<'HELP'
@@ -60,6 +64,11 @@ while [ $# -gt 0 ]; do
 
 Опции:
   -q, --quiet   Показывать только итоговую сводку.
+  -f, --fix     Если найдены FAIL, запустить install.sh --install —
+                он идемпотентен и восстановит sysctl, скрипты, юниты,
+                mangle, ip rule и rt_tables. Пользовательские конфиги
+                (/etc/xray/*.json, /etc/tun2socks/*.yaml) и проблемы
+                апстрима он не исправит.
   -h, --help    Эта справка.
 HELP
             else
@@ -68,6 +77,11 @@ Usage: diag.sh [options]
 
 Options:
   -q, --quiet   Show summary only.
+  -f, --fix     If any FAIL is found, run install.sh --install —
+                it is idempotent and restores sysctl, scripts, units,
+                mangle, ip rule and rt_tables. It will not fix user
+                configs (/etc/xray/*.json, /etc/tun2socks/*.yaml) or
+                upstream problems.
   -h, --help    This help.
 HELP
             fi
@@ -407,6 +421,27 @@ summary() {
     fi
 }
 
+run_fix() {
+    if [ "$FAIL_COUNT" -eq 0 ]; then
+        return 0
+    fi
+    if [ ! -f "$INSTALL_SH" ]; then
+        echo
+        echo "$(t "--fix: install.sh not found at $INSTALL_SH (override with INSTALL_SH=...)" \
+               "--fix: install.sh не найден по пути $INSTALL_SH (переопредели через INSTALL_SH=...)")" >&2
+        return 1
+    fi
+    if [ "$(id -u)" -ne 0 ]; then
+        echo
+        echo "$(t "--fix: must be root to run install.sh --install" \
+               "--fix: для запуска install.sh --install нужен root")" >&2
+        return 1
+    fi
+    echo
+    printf "%s========== %s ==========%s\n" "$C_DIM" "$(t "Running install.sh --install (--fix)" "Запускаю install.sh --install (--fix)")" "$C_RST"
+    bash "$INSTALL_SH" --install
+}
+
 main() {
     check_sysctl
     check_rt_tables
@@ -418,6 +453,11 @@ main() {
     check_iptables
     check_tunnels
     summary
+    local rc=$?
+    if [ "$FIX" -eq 1 ]; then
+        run_fix
+    fi
+    return $rc
 }
 
 main
