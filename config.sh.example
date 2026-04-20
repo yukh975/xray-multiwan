@@ -12,17 +12,17 @@
 #
 # PARENT_IF — имя родительского сетевого интерфейса в контейнере, поверх
 #             которого создаются macvlan-подинтерфейсы. Узнать текущее имя
-#             можно командой `ip -br link show`. Часто это `eth0`, у меня
-#             исторически `global`.
+#             можно командой `ip -br link show` (обычно eth0).
 #             Parent interface inside the container on top of which macvlan
-#             sub-interfaces are created. Check with `ip -br link show`.
+#             sub-interfaces are created. Check with `ip -br link show`
+#             (usually eth0).
 #
 # NETMASK_BITS — длина маски подсети (обычно 24, может быть 28 и т.п.).
 #             Prefix length for the subnet where PARENT_IF and macvlan IPs
 #             live (commonly 24, may be 28, etc.).
 #
 # COUNTRIES — список WAN-выходов в формате "код:IP:fwmark":
-#   * код     — короткое имя выхода (fr, se, nl, ...). Совпадает с именами
+#   * код     — короткое имя выхода (wan1, wan2, ...). Совпадает с именами
 #               /etc/tun2socks/<код>.yaml, xray@<код>.service,
 #               tun2socks@<код>.service, tun<код>, macvlan xray-<код>.
 #   * IP      — адрес macvlan-интерфейса в той же подсети, что и PARENT_IF.
@@ -33,11 +33,15 @@
 #   config / service instance / macvlan name. IP is the macvlan address a
 #   client sets as its default gateway. fwmark is any unique integer.
 #
-PARENT_IF="global"
+#   Имя переменной COUNTRIES осталось исторически; концептуально это
+#   список WAN-выходов / xray-инстансов. The variable name is historical;
+#   conceptually these are WAN exits / xray instances.
+#
+PARENT_IF="eth0"
 NETMASK_BITS="24"
 
 COUNTRIES=(
-    "fr:192.168.0.232:100"
-    "se:192.168.0.233:101"
-    "fi:192.168.0.234:102"
+    "wan1:192.168.0.232:100"
+    "wan2:192.168.0.233:101"
+    "wan3:192.168.0.234:102"
 )

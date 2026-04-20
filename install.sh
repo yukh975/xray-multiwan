@@ -27,7 +27,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_SH="${CONFIG_SH:-$SCRIPT_DIR/config.sh}"
 if [ ! -f "$CONFIG_SH" ]; then
     echo "ERROR: config file not found: $CONFIG_SH" >&2
-    echo "       set CONFIG_SH=/path/to/config.sh or place config.sh next to install.sh" >&2
+    echo "       copy config.sh.example to config.sh and edit it:" >&2
+    echo "         cp $SCRIPT_DIR/config.sh.example $SCRIPT_DIR/config.sh" >&2
     exit 1
 fi
 # shellcheck source=config.sh disable=SC1091

@@ -9,52 +9,52 @@
 [![tun2socks](https://img.shields.io/badge/tun2socks-xjasonlyu-green)](https://github.com/xjasonlyu/tun2socks)
 [![Idempotent](https://img.shields.io/badge/install-idempotent-success)](#re-running-installsh-on-a-live-system)
 
-A single Proxmox container running multiple xray+tun2socks stacks — one per WAN exit. The client picks an exit by pointing its default gateway at a different IP: e.g. `.232` → France, `.233` → Sweden, `.234` → Finland.
+A single Proxmox container running multiple xray+tun2socks stacks — one per WAN exit. The client picks an exit by pointing its default gateway at a different IP: e.g. `.232` → first exit, `.233` → second, `.234` → third.
 
 ## Architecture
 
 ```
-Client (192.168.0.245)
+Client (192.168.0.100)
   │
   │ gateway = 192.168.0.232 (or .233, .234)
   ↓
 ┌─────────────────────────────────────────────────┐
 │ Container (ALT Linux / Debian)                  │
 │                                                 │
-│ global (192.168.0.230) ─ physical veth          │
-│   ├─ xray-fr (192.168.0.232) ─ macvlan          │
-│   │     └→ xray@fr socks5 :10808 ─→ tunfr ─→ FR │
-│   ├─ xray-se (192.168.0.233) ─ macvlan          │
-│   │     └→ xray@se socks5 :10808 ─→ tunse ─→ SE │
-│   └─ xray-fi (192.168.0.234) ─ macvlan          │
-│         └→ xray@fi socks5 :10808 ─→ tunfi ─→ FI │
+│ eth0 (192.168.0.230) ─ physical veth          │
+│   ├─ xray-wan1 (192.168.0.232) ─ macvlan          │
+│   │     └→ xray@wan1 socks5 :10808 ─→ tunwan1 ─→ out    │
+│   ├─ xray-wan2 (192.168.0.233) ─ macvlan          │
+│   │     └→ xray@wan2 socks5 :10808 ─→ tunwan2 ─→ out    │
+│   └─ xray-wan3 (192.168.0.234) ─ macvlan          │
+│         └→ xray@wan3 socks5 :10808 ─→ tunwan3 ─→ out    │
 └─────────────────────────────────────────────────┘
 ```
 
 **How gateway differentiation works:**
 
-1. Three macvlan sub-interfaces are created on top of `global`, each with its own MAC and IP.
-2. When the client sets `.232` as its gateway, ARP resolves that IP to the `xray-fr` MAC — and frames arrive at that specific interface.
-3. `iptables -t mangle` matches `-i xray-fr` and stamps `fwmark 100` on the packet.
-4. `ip rule fwmark 100` routes the packet through table `via_fr`.
-5. That table's default route goes through `tunfr`.
-6. tun2socks picks up the packet, forwards it to the local xray socks5, and xray tunnels it out via VLESS to France.
+1. Three macvlan sub-interfaces are created on top of `eth0`, each with its own MAC and IP.
+2. When the client sets `.232` as its gateway, ARP resolves that IP to the `xray-wan1` MAC — and frames arrive at that specific interface.
+3. `iptables -t mangle` matches `-i xray-wan1` and stamps `fwmark 100` on the packet.
+4. `ip rule fwmark 100` routes the packet through table `via_wan1`.
+5. That table's default route goes through `tunwan1`.
+6. tun2socks picks up the packet, forwards it to the local xray socks5, and xray tunnels it out via VLESS to the upstream.
 7. On the tun output side, `MASQUERADE` rewrites the source IP so the remote endpoint sees the container, not the client.
 
 ## Prerequisites
 
-1. **Proxmox container** with a single interface (`global`), privileged (required for macvlan and TUN).
+1. **Proxmox container** with a single interface (`eth0`), privileged (required for macvlan and TUN).
 2. **TUN passthrough** on the PVE host — in `/etc/pve/lxc/<VMID>.conf`:
    ```
    lxc.cgroup2.devices.allow: c 10:200 rwm
    lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
    ```
 3. **xray** installed as a systemd template `xray@.service`, one instance per exit:
-   - `xray@fr` listens on socks5 at `192.168.0.232:10808`
-   - `xray@se` listens on socks5 at `192.168.0.233:10808`
-   - `xray@fi` listens on socks5 at `192.168.0.234:10808`
+   - `xray@wan1` listens on socks5 at `192.168.0.232:10808`
+   - `xray@wan2` listens on socks5 at `192.168.0.233:10808`
+   - `xray@wan3` listens on socks5 at `192.168.0.234:10808`
 4. **tun2socks** (xjasonlyu/tun2socks) installed at `/usr/bin/tun2socks`, with a systemd template `/usr/lib/systemd/system/tun2socks@.service`.
-5. **tun2socks configs** in `/etc/tun2socks/<n>.yaml`, where `<n>` = `fr`, `se`, `fi`. Required fields:
+5. **tun2socks configs** in `/etc/tun2socks/<n>.yaml`, where `<n>` = `wan1`, `wan2`, `wan3`. Required fields:
    - `device: tun://tun<n>` (tun2socks will create the tun device with that name)
    - `proxy: socks5://192.168.0.<IP>:10808` — points to the matching xray instance
 6. **iptables-service** (classic sysvinit-style) with `/etc/sysconfig/iptables`. Ships with ALT Linux by default; on Debian you may need `iptables-persistent`.
@@ -64,13 +64,13 @@ Client (192.168.0.245)
 All tunables live in [`config.sh`](config.sh), sourced by `install.sh`, `diag.sh` and `migrate.sh`. Edit it in one place:
 
 ```bash
-PARENT_IF="global"                      # parent interface (eth0 / global / ...)
+PARENT_IF="eth0"                      # parent interface (e.g. eth0)
 NETMASK_BITS="24"                       # subnet prefix length
 
 COUNTRIES=(
-    "fr:192.168.0.232:100"              # code:IP:fwmark
-    "se:192.168.0.233:101"
-    "fi:192.168.0.234:102"
+    "wan1:192.168.0.232:100"              # code:IP:fwmark
+    "wan2:192.168.0.233:101"
+    "wan3:192.168.0.234:102"
 )
 ```
 
@@ -86,25 +86,25 @@ Removes every artifact `install.sh` creates — services, scripts, systemd units
 
 ## Step-by-step installation
 
-### Step 1. Bring up three IPs on `global` via macvlan
+### Step 1. Bring up three IPs on `eth0` via macvlan
 
 Each macvlan gets its own MAC — this is critical so the client's ARP cache can tell the gateways apart.
 
 ```bash
 # Create macvlan sub-interfaces:
-ip link add link global name xray-fr type macvlan mode bridge
-ip link add link global name xray-se type macvlan mode bridge
-ip link add link global name xray-fi type macvlan mode bridge
+ip link add link eth0 name xray-wan1 type macvlan mode bridge
+ip link add link eth0 name xray-wan2 type macvlan mode bridge
+ip link add link eth0 name xray-wan3 type macvlan mode bridge
 
 # Assign IPs:
-ip addr add 192.168.0.232/24 dev xray-fr
-ip addr add 192.168.0.233/24 dev xray-se
-ip addr add 192.168.0.234/24 dev xray-fi
+ip addr add 192.168.0.232/24 dev xray-wan1
+ip addr add 192.168.0.233/24 dev xray-wan2
+ip addr add 192.168.0.234/24 dev xray-wan3
 
 # Bring links up:
-ip link set xray-fr up
-ip link set xray-se up
-ip link set xray-fi up
+ip link set xray-wan1 up
+ip link set xray-wan2 up
+ip link set xray-wan3 up
 
 # Verify:
 ip -4 addr show
@@ -136,15 +136,15 @@ EOF
 sysctl -p /etc/sysctl.d/99-forward.conf
 ```
 
-`rp_filter=0` is required because routing here is asymmetric (packet arrives on `xray-fr`, reply goes out via `tunfr`) — strict reverse-path filtering would drop these packets.
+`rp_filter=0` is required because routing here is asymmetric (packet arrives on `xray-wan1`, reply goes out via `tunwan1`) — strict reverse-path filtering would drop these packets.
 
 ### Step 4. Routing tables
 
 ```bash
 cat >> /etc/iproute2/rt_tables <<'EOF'
-100 via_fr
-101 via_se
-102 via_fi
+100 via_wan1
+101 via_wan2
+102 via_wan3
 EOF
 ```
 
@@ -172,23 +172,23 @@ setup_iface() {
     local name="$1"
     local addr="$2"
     ip link show "$name" &>/dev/null || \
-        ip link add link global name "$name" type macvlan mode bridge
+        ip link add link eth0 name "$name" type macvlan mode bridge
     if ! ip -4 -o addr show dev "$name" | awk '{print $4}' | grep -qx "${addr}/24"; then
         ip addr add "${addr}/24" dev "$name" 2>/dev/null || true
     fi
     ip link set "$name" up
 }
-setup_iface xray-fr 192.168.0.232
-setup_iface xray-se 192.168.0.233
-setup_iface xray-fi 192.168.0.234
+setup_iface xray-wan1 192.168.0.232
+setup_iface xray-wan2 192.168.0.233
+setup_iface xray-wan3 192.168.0.234
 EOF
 chmod +x /usr/local/sbin/setup-macvlan.sh
 
 cat > /etc/systemd/system/setup-macvlan.service <<'EOF'
 [Unit]
-Description=Setup macvlan subinterfaces on global
+Description=Setup macvlan subinterfaces on eth0
 After=network.target
-Before=tun2socks@fr.service tun2socks@se.service tun2socks@fi.service xray@fr.service xray@se.service xray@fi.service
+Before=tun2socks@wan1.service tun2socks@wan2.service tun2socks@wan3.service xray@wan1.service xray@wan2.service xray@wan3.service
 
 [Service]
 Type=oneshot
@@ -209,7 +209,7 @@ systemctl enable --now setup-macvlan.service
 cat > /usr/local/sbin/setup-routing.sh <<'EOF'
 #!/bin/bash
 # Wait for tun interfaces (up to 30s)
-for t in tunfr tunse tunfi; do
+for t in tunwan1 tunwan2 tunwan3; do
     for i in $(seq 1 30); do
         ip link show "$t" &>/dev/null && break
         sleep 1
@@ -217,12 +217,12 @@ for t in tunfr tunse tunfi; do
 done
 
 # Default routes in each table
-ip route replace default dev tunfr table via_fr
-ip route replace default dev tunse table via_se
-ip route replace default dev tunfi table via_fi
+ip route replace default dev tunwan1 table via_wan1
+ip route replace default dev tunwan2 table via_wan2
+ip route replace default dev tunwan3 table via_wan3
 
 # ip rule: fwmark → table (delete first to avoid duplicates)
-for mark_table in "100:via_fr" "101:via_se" "102:via_fi"; do
+for mark_table in "100:via_wan1" "101:via_wan2" "102:via_wan3"; do
     mark="${mark_table%%:*}"
     table="${mark_table##*:}"
     ip rule del fwmark "$mark" table "$table" 2>/dev/null
@@ -231,18 +231,18 @@ done
 
 # Mark packets by input interface
 iptables -t mangle -F PREROUTING
-iptables -t mangle -A PREROUTING -i xray-fr -j MARK --set-mark 100
-iptables -t mangle -A PREROUTING -i xray-se -j MARK --set-mark 101
-iptables -t mangle -A PREROUTING -i xray-fi -j MARK --set-mark 102
+iptables -t mangle -A PREROUTING -i xray-wan1 -j MARK --set-mark 100
+iptables -t mangle -A PREROUTING -i xray-wan2 -j MARK --set-mark 101
+iptables -t mangle -A PREROUTING -i xray-wan3 -j MARK --set-mark 102
 
 # Egress NAT
-for t in tunfr tunse tunfi; do
+for t in tunwan1 tunwan2 tunwan3; do
     iptables -t nat -C POSTROUTING -o "$t" -j MASQUERADE 2>/dev/null || \
         iptables -t nat -A POSTROUTING -o "$t" -j MASQUERADE
 done
 
 # rp_filter=0 on every involved interface
-for i in xray-fr xray-se xray-fi tunfr tunse tunfi global; do
+for i in xray-wan1 xray-wan2 xray-wan3 tunwan1 tunwan2 tunwan3 eth0; do
     sysctl -w net.ipv4.conf.$i.rp_filter=0 >/dev/null 2>&1 || true
 done
 
@@ -258,7 +258,7 @@ chmod +x /usr/local/sbin/setup-routing.sh
 cat > /etc/systemd/system/setup-routing.service <<'EOF'
 [Unit]
 Description=Policy routing for multi-WAN tun
-After=setup-macvlan.service iptables.service tun2socks@fr.service tun2socks@se.service tun2socks@fi.service xray@fr.service xray@se.service xray@fi.service
+After=setup-macvlan.service iptables.service tun2socks@wan1.service tun2socks@wan2.service tun2socks@wan3.service xray@wan1.service xray@wan2.service xray@wan3.service
 Wants=setup-macvlan.service
 
 [Service]
@@ -279,8 +279,8 @@ systemctl enable setup-routing.service
 Ordering matters: xray must start **before** tun2socks, because tun2socks connects to xray's socks5 at startup. Systemd's `Before=`/`After=` handles this automatically; for manual restarts, start xray first, then tun2socks.
 
 ```bash
-systemctl enable --now xray@fr xray@se xray@fi
-systemctl enable --now tun2socks@fr tun2socks@se tun2socks@fi
+systemctl enable --now xray@wan1 xray@wan2 xray@wan3
+systemctl enable --now tun2socks@wan1 tun2socks@wan2 tun2socks@wan3
 ```
 
 ### Step 9. Start routing
@@ -294,9 +294,9 @@ systemctl start setup-routing.service
 From inside the container (bypassing the client path):
 
 ```bash
-curl --interface tunfr -s -m 10 https://api.ipify.org; echo
-curl --interface tunse -s -m 10 https://api.ipify.org; echo
-curl --interface tunfi -s -m 10 https://api.ipify.org; echo
+curl --interface tunwan1 -s -m 10 https://api.ipify.org; echo
+curl --interface tunwan2 -s -m 10 https://api.ipify.org; echo
+curl --interface tunwan3 -s -m 10 https://api.ipify.org; echo
 ```
 
 You should see three **different** IPs — the upstream exit for each WAN.
@@ -309,7 +309,7 @@ route add 0.0.0.0 mask 0.0.0.0 192.168.0.232
 arp -d *
 ```
 
-Open `https://api.ipify.org` in a browser — you should see a French IP. Switch the gateway to `.233` / `.234` to get a Swedish / Finnish IP.
+Open `https://api.ipify.org` in a browser — you should see the IP of the first upstream. Switch the gateway to `.233` / `.234` to get the IPs of the second and third upstreams.
 
 **Important:** ICMP (`ping`, `tracert`) does **not** work through VLESS. Test strictly over TCP (HTTP/HTTPS).
 
@@ -332,7 +332,7 @@ What it checks:
 - **Routing tables** — every `via_<code>` entry is present in `/etc/iproute2/rt_tables`.
 - **Scripts** — `/usr/local/sbin/setup-macvlan.sh` and `/usr/local/sbin/setup-routing.sh` exist and are executable.
 - **systemd units** — `setup-macvlan.service`, `setup-routing.service`, `xray@<code>`, `tun2socks@<code>` all enabled and active, plus the `tun2socks@` `link-up.conf` drop-in.
-- **Interfaces** — parent (`global`) exists; each `xray-<code>` is macvlan, has its own MAC (distinct from the parent — critical for ARP), has the expected IP, is `UP`, has `rp_filter=0`; each `tun<code>` is up with `rp_filter=0`.
+- **Interfaces** — parent (`eth0`) exists; each `xray-<code>` is macvlan, has its own MAC (distinct from the parent — critical for ARP), has the expected IP, is `UP`, has `rp_filter=0`; each `tun<code>` is up with `rp_filter=0`.
 - **ip rule** — fwmark → table routing rule present for every exit.
 - **Routing per table** — `via_<code>` has a default route through the right `tun<code>`.
 - **iptables** — mangle `-i xray-<code> → MARK` and NAT `-o tun<code> → MASQUERADE` rules present.
@@ -349,9 +349,9 @@ ip link show
 
 # Rules and tables:
 ip rule show
-ip route show table via_fr
-ip route show table via_se
-ip route show table via_fi
+ip route show table via_wan1
+ip route show table via_wan2
+ip route show table via_wan3
 
 # Mangle counters — these grow under client traffic:
 iptables -t mangle -L PREROUTING -v -n
@@ -361,12 +361,12 @@ iptables -t nat -L POSTROUTING -v -n
 
 # Service status:
 systemctl status setup-macvlan setup-routing
-systemctl status xray@fr xray@se xray@fi
-systemctl status tun2socks@fr tun2socks@se tun2socks@fi
+systemctl status xray@wan1 xray@wan2 xray@wan3
+systemctl status tun2socks@wan1 tun2socks@wan2 tun2socks@wan3
 
 # Where packets actually go:
-tcpdump -ni xray-fr -c 10 'host <client-IP> and not port 22'
-tcpdump -ni tunfr  -c 10 'host <client-IP> and not port 22'
+tcpdump -ni xray-wan1 -c 10 'host <client-IP> and not port 22'
+tcpdump -ni tunwan1  -c 10 'host <client-IP> and not port 22'
 ```
 
 ## Re-running install.sh on a live system
@@ -425,50 +425,36 @@ To change the exit list, edit the `COUNTRIES` array in [`config.sh`](config.sh) 
 
 ## Adding a new exit
 
-To add e.g. a Netherlands exit (code `nl`, IP `.235`, tun `tunnl`, xray socks5 on `.235:10808`):
+To add a fourth exit (code `wan4`, IP `.235`, tun `tunwan4`, xray socks5 on `.235:10808`):
 
-1. Prepare an xray config for `xray@nl` and `/etc/tun2socks/nl.yaml`.
-2. Add `103 via_nl` to `/etc/iproute2/rt_tables`.
-3. In `/usr/local/sbin/setup-macvlan.sh` add `setup_iface xray-nl 192.168.0.235`.
+1. Prepare an xray config for `xray@wan4` and `/etc/tun2socks/nl.yaml`.
+2. Add `103 via_wan4` to `/etc/iproute2/rt_tables`.
+3. In `/usr/local/sbin/setup-macvlan.sh` add `setup_iface xray-wan4 192.168.0.235`.
 4. In `/usr/local/sbin/setup-routing.sh`:
-   - Add `ip route replace default dev tunnl table via_nl` to the default-route block.
-   - Add `"103:via_nl"` to the `ip rule` loop.
-   - Add `iptables -t mangle -A PREROUTING -i xray-nl -j MARK --set-mark 103`.
-   - Add `tunnl` and `xray-nl` to the NAT and rp_filter loops.
-5. In `setup-macvlan.service` add `tun2socks@nl.service xray@nl.service` to `Before=`.
-6. In `setup-routing.service` add `tun2socks@nl.service xray@nl.service` to `After=`.
-7. Enable and start: `systemctl enable --now xray@nl tun2socks@nl`, then `systemctl restart setup-routing.service`.
+   - Add `ip route replace default dev tunwan4 table via_wan4` to the default-route block.
+   - Add `"103:via_wan4"` to the `ip rule` loop.
+   - Add `iptables -t mangle -A PREROUTING -i xray-wan4 -j MARK --set-mark 103`.
+   - Add `tunwan4` and `xray-wan4` to the NAT and rp_filter loops.
+5. In `setup-macvlan.service` add `tun2socks@wan4.service xray@wan4.service` to `Before=`.
+6. In `setup-routing.service` add `tun2socks@wan4.service xray@wan4.service` to `After=`.
+7. Enable and start: `systemctl enable --now xray@wan4 tun2socks@wan4`, then `systemctl restart setup-routing.service`.
 
 Or — simpler — add the new entry to the `COUNTRIES` array in [`config.sh`](config.sh) and re-run `install.sh`. It's idempotent and will reconfigure everything including the new exit.
 
 ## Migration to a new address plan
 
-Use `migrate.sh` when the whole subnet changes — your provider shuffles IPs, or you move the container to a different bridge with a different address range. It rewires xray configs, tun2socks configs, `config.sh`, and the live macvlan interfaces in one pass.
+Use `migrate.sh` when the whole subnet changes — your provider shuffles IPs, or you move the container to a different bridge with a different address range. It rewires xray configs, tun2socks configs, and the live macvlan interfaces in one pass.
 
 ### Configuration
 
-Edit the `NEW_*` block at the top of `migrate.sh`:
-
-```bash
-NEW_PARENT_IP="192.168.1.20"
-NEW_NETMASK_BITS="28"
-
-NEW_COUNTRIES=(
-    "fr:192.168.1.21:100"
-    "se:192.168.1.22:101"
-    "fi:192.168.1.23:102"
-)
-```
-
-- `NEW_PARENT_IP` / `NEW_NETMASK_BITS` — the new address and prefix on `global`. Must match what you configured on the PVE host side.
-- `NEW_COUNTRIES` — same `code:IP:mark` format as `install.sh`. Exit codes and fwmarks stay the same; only IPs change.
+There is nothing to edit in `migrate.sh` itself — it reads the target plan from [`config.sh`](config.sh). Edit `config.sh` to reflect the new state (new `NETMASK_BITS` and new per-exit IPs in `COUNTRIES`), then run `migrate.sh`. Exit codes and fwmarks stay the same; only IPs and the prefix change.
 
 ### Precondition: change the IP on the PVE host first
 
-The script **will not** change the `global` IP for you — it only verifies the new address is already in place. On the PVE host, before running the script:
+The script **will not** change the `eth0` IP for you — it only verifies the new address is already in place. On the PVE host, before running the script:
 
 ```bash
-pct set <VMID> -net0 name=global,bridge=<...>,ip=192.168.1.20/28,gw=<new-gw>
+pct set <VMID> -net0 name=eth0,bridge=<...>,ip=192.168.1.20/28,gw=<new-gw>
 pct reboot <VMID>
 ```
 
@@ -479,25 +465,24 @@ bash migrate.sh --dry-run   # preview every change
 bash migrate.sh             # apply
 ```
 
-If `global` isn't on the expected subnet yet, the script stops with the exact `pct set` command to run.
+If `eth0` isn't on the expected subnet yet, the script stops with the exact `pct set` command to run.
 
 ### What it does (in order)
 
-1. **Checks** — `global` is on `NEW_PARENT_IP/NEW_NETMASK_BITS`; `install.sh`, `diag.sh`, `config.sh` exist at the expected paths (`/root/files/` by default, override via `INSTALL_SH=` / `DIAG_SH=` / `CONFIG_SH=`).
+1. **Checks** — `eth0` is on the subnet of the first `COUNTRIES` entry (coarse /24 prefix match); `install.sh`, `diag.sh`, `config.sh` exist at the expected paths (`/root/files/` by default, override via `INSTALL_SH=` / `DIAG_SH=` / `CONFIG_SH=`).
 2. **Backup** — `/etc/xray/<code>.json`, `/etc/tun2socks/<code>.yaml`, `install.sh`, `diag.sh` are copied to `/root/migrate-backup-<YYYYMMDD-HHMMSS>/`.
-3. **xray configs** — rewrites the `"listen"` field in each `/etc/xray/<code>.json` to the new per-exit IP.
+3. **xray configs** — rewrites the `"listen"` field in each `/etc/xray/<code>.json` to the new per-exit IP from `config.sh`.
 4. **tun2socks configs** — rewrites `proxy: socks5://<old-ip>:10808` to the new IP in each `/etc/tun2socks/<code>.yaml`.
-5. **config.sh** — rewrites the `COUNTRIES` array and `NETMASK_BITS` value in `config.sh` (old block removed, new block inserted in place). `install.sh`/`diag.sh` read these values on their next run, so only one file needs editing.
-6. **Strip old IPs** — any address still sitting on `xray-<code>` interfaces that isn't in the new plan gets removed with `ip addr del`.
-7. **Restart xray** — `xray@<code>` reloads with the new `listen` address.
-8. **Run install.sh** — regenerates `/usr/local/sbin/setup-*.sh` and systemd units, restarts all services, saves iptables.
-9. **Run diag.sh** — prints a final report so you see immediately whether the migration landed cleanly.
+5. **Strip old IPs** — any address still sitting on `xray-<code>` interfaces that isn't in the new plan gets removed with `ip addr del`.
+6. **Restart xray** — `xray@<code>` reloads with the new `listen` address.
+7. **Run install.sh** — regenerates `/usr/local/sbin/setup-*.sh` and systemd units, restarts all services, saves iptables.
+8. **Run diag.sh** — prints a final report so you see immediately whether the migration landed cleanly.
 
 ### What it does NOT do
 
-- Does **not** change the IP on `global` itself (you do that on the PVE host).
+- Does **not** change the IP on `eth0` itself (you do that on the PVE host).
 - Does **not** clean up stale routing-table entries in `/etc/iproute2/rt_tables` (they're harmless, keyed by fwmark).
-- Does **not** remove old macvlan interfaces whose codes no longer exist in `NEW_COUNTRIES` — only IPs are stripped.
+- Does **not** remove old macvlan interfaces whose codes no longer exist in `COUNTRIES` — only IPs are stripped.
 
 ### Dry run
 
