@@ -491,3 +491,7 @@ bash migrate.sh --dry-run
 ```
 
 Prints every file it would write and every command it would run, without touching anything. Preconditions (parent IP, script paths) are still enforced.
+
+## Author
+
+Yuriy Khachaturian — <https://yukh.net>

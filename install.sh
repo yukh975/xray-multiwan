@@ -2,19 +2,20 @@
 #
 # Multi-WAN gateway installer (xray + tun2socks)
 #
-# Разворачивает в одном контейнере схему: N macvlan-интерфейсов на global,
-# каждый со своим IP; клиент, указывающий определённый IP как шлюз,
-# попадает через xray+tun2socks в соответствующий WAN-выход.
+# Deploys inside one container: N macvlan sub-interfaces on PARENT_IF,
+# each with its own IP. A client that sets one of those IPs as its default
+# gateway is routed through the matching xray+tun2socks stack to that WAN
+# exit.
 #
-# Перед запуском:
-#  - в контейнере должен быть поднят интерфейс PARENT_IF (по умолчанию global)
-#    с основным IP (например, 192.168.0.230/24);
-#  - должны быть установлены xray и tun2socks (xjasonlyu);
-#  - должен быть systemd-шаблон tun2socks@.service;
-#  - для каждого выхода должен быть конфиг /etc/tun2socks/<код>.yaml,
-#    в котором tun2socks подключается к своему xray socks5.
+# Preconditions:
+#  - PARENT_IF is up inside the container (default eth0) with its primary
+#    IP (e.g. 192.168.0.230/24);
+#  - xray and tun2socks (xjasonlyu) are installed;
+#  - the tun2socks@.service systemd template exists;
+#  - each exit has a config at /etc/tun2socks/<code>.yaml where tun2socks
+#    points at its xray socks5 listener.
 #
-# Запускать от root.
+# Run as root.
 
 set -uo pipefail
 
@@ -142,7 +143,7 @@ log() {
     echo "[$(date +%H:%M:%S)] $*"
 }
 
-# run — выполняет команду или только печатает её в dry-run режиме.
+# run — execute a command, or just print it in dry-run mode.
 run() {
     if [ "$DRY_RUN" -eq 1 ]; then
         echo "  + $*"
@@ -152,7 +153,7 @@ run() {
     fi
 }
 
-# write_file — создаёт файл с содержимым (читает из stdin).
+# write_file — create a file with contents read from stdin.
 write_file() {
     local path="$1"
     local mode="${2:-}"
@@ -174,7 +175,7 @@ write_file() {
     return 0
 }
 
-# remove_file — удаляет файл (или печатает в dry-run).
+# remove_file — delete a file (or print in dry-run).
 remove_file() {
     local path="$1"
     if [ "$DRY_RUN" -eq 1 ]; then
@@ -275,9 +276,9 @@ require_configs() {
 }
 
 require_xray_units() {
-    # Шаблон xray@.service должен существовать. Конкретные инстансы
-    # xray@<code>.service порождаются динамически и в list-unit-files
-    # не отображаются.
+    # The xray@.service template must exist. Per-code instances
+    # xray@<code>.service are created dynamically and do not appear
+    # in list-unit-files.
     if [ ! -f /usr/lib/systemd/system/xray@.service ] && \
        [ ! -f /etc/systemd/system/xray@.service ] && \
        [ ! -f /lib/systemd/system/xray@.service ]; then
@@ -353,7 +354,7 @@ write_macvlan_script() {
 
     write_file /usr/local/sbin/setup-macvlan.sh 755 <<EOF
 #!/bin/bash
-# Создаёт macvlan-подинтерфейсы поверх ${PARENT_IF}
+# Create macvlan sub-interfaces on top of ${PARENT_IF}.
 setup_iface() {
     local name="\$1"
     local addr="\$2"
@@ -423,9 +424,9 @@ write_routing_script() {
 
     write_file /usr/local/sbin/setup-routing.sh 755 <<EOF
 #!/bin/bash
-# Policy routing для multi-WAN tun
+# Policy routing for multi-WAN tun setup.
 
-# Ждём появления tun-интерфейсов (до 30 сек)
+# Wait for tun interfaces to appear (up to 30s).
 for t in${wait_tun_list}; do
     for i in \$(seq 1 30); do
         ip link show "\$t" &>/dev/null && break
@@ -433,27 +434,27 @@ for t in${wait_tun_list}; do
     done
 done
 
-# Default-маршруты в таблицах
+# Default routes in per-exit tables.
 ${default_routes}
-# ip rule: fwmark → таблица
+# ip rule: fwmark → table.
 ${ip_rules}
-# Маркировка по входному интерфейсу
+# Mark packets by ingress interface.
 iptables -t mangle -F PREROUTING
 ${mangle_rules}
-# NAT на выходе
+# NAT on the way out.
 for t in${tuns}; do
     iptables -t nat -C POSTROUTING -o "\$t" -j MASQUERADE 2>/dev/null || \\
         iptables -t nat -A POSTROUTING -o "\$t" -j MASQUERADE
 done
 
-# rp_filter=0 для всех задействованных интерфейсов
+# rp_filter=0 for every interface we touch.
 for i in${xrays}${tuns} ${PARENT_IF}; do
     sysctl -w net.ipv4.conf.\$i.rp_filter=0 >/dev/null 2>&1 || true
 done
 
 ip route flush cache
 
-# Сохраняем iptables для persistence, если есть /etc/sysconfig
+# Persist iptables if /etc/sysconfig exists.
 if [ -d /etc/sysconfig ]; then
     iptables-save > /etc/sysconfig/iptables
 fi
@@ -504,8 +505,8 @@ start_services() {
     log "$(t "Starting services" "Запускаю сервисы")"
     run systemctl restart setup-macvlan.service
 
-    # xray слушает socks5 на адресах macvlan — стартует после macvlan,
-    # но до tun2socks, который к xray подключается.
+    # xray listens on socks5 bound to macvlan addresses — start after
+    # macvlan, but before tun2socks (which connects to xray).
     for item in "${COUNTRIES[@]}"; do
         local code="${item%%:*}"
         run systemctl restart "xray@${code}.service"
@@ -516,7 +517,7 @@ start_services() {
         run systemctl restart "tun2socks@${code}.service"
     done
 
-    # Даём tun2socks'ам пару секунд, чтобы tun-интерфейсы точно поднялись
+    # Give tun2socks a couple of seconds so tun interfaces are up.
     run sleep 2
 
     run systemctl restart setup-routing.service
@@ -563,7 +564,7 @@ uninstall_all() {
     log "$(t "Uninstalling multi-WAN gateway" \
            "Удаляю multi-WAN gateway")"
 
-    # 1. Остановить и отключить инстансные сервисы
+    # 1. Stop and disable per-instance services.
     for item in "${COUNTRIES[@]}"; do
         local code="${item%%:*}"
         run systemctl stop    "tun2socks@${code}.service" 2>/dev/null || true
@@ -572,38 +573,38 @@ uninstall_all() {
         run systemctl disable "xray@${code}.service"      2>/dev/null || true
     done
 
-    # 2. Остановить и отключить собственные юниты
+    # 2. Stop and disable our own units.
     run systemctl stop    setup-routing.service 2>/dev/null || true
     run systemctl stop    setup-macvlan.service 2>/dev/null || true
     run systemctl disable setup-routing.service 2>/dev/null || true
     run systemctl disable setup-macvlan.service 2>/dev/null || true
 
-    # 3. Чистим iptables
+    # 3. Clean iptables.
     log "$(t "Clearing iptables rules" "Чищу правила iptables")"
     run iptables -t mangle -F PREROUTING 2>/dev/null || true
     for item in "${COUNTRIES[@]}"; do
         local code="${item%%:*}"
-        # Удаляем NAT-правило, если есть (повторяем пока -D возвращает 0)
+        # Drop the NAT rule if present (loop in case it was added more than once).
         while iptables -t nat -C POSTROUTING -o "tun${code}" -j MASQUERADE 2>/dev/null; do
             run iptables -t nat -D POSTROUTING -o "tun${code}" -j MASQUERADE
         done
     done
 
-    # 4. Снять ip rule
+    # 4. Remove ip rules.
     log "$(t "Removing ip rules and routing tables" \
            "Удаляю ip rule и таблицы маршрутов")"
     for item in "${COUNTRIES[@]}"; do
         local code="${item%%:*}"
         local mark="${item##*:}"
         local tbl="via_${code}"
-        # del в цикле — вдруг правило добавлено несколько раз
+        # Loop the del in case the rule was added multiple times.
         while ip rule show | grep -qE "fwmark 0x$(printf '%x' "$mark")\b.*lookup ${tbl}"; do
             run ip rule del fwmark "$mark" table "$tbl" 2>/dev/null || break
         done
         run ip route flush table "$tbl" 2>/dev/null || true
     done
 
-    # 5. Удалить macvlan-интерфейсы
+    # 5. Remove macvlan interfaces.
     log "$(t "Removing macvlan interfaces" "Удаляю macvlan-интерфейсы")"
     for item in "${COUNTRIES[@]}"; do
         local code="${item%%:*}"
@@ -612,7 +613,7 @@ uninstall_all() {
         fi
     done
 
-    # 6. Удалить файлы
+    # 6. Remove generated files.
     log "$(t "Removing scripts, units and sysctl files" \
            "Удаляю скрипты, юниты и sysctl-файлы")"
     remove_file /usr/local/sbin/setup-macvlan.sh
@@ -626,7 +627,7 @@ uninstall_all() {
     remove_file /etc/sysctl.d/99-arp.conf
     remove_file /etc/sysctl.d/99-forward.conf
 
-    # 7. Удалить записи из /etc/iproute2/rt_tables
+    # 7. Remove entries from /etc/iproute2/rt_tables.
     log "$(t "Cleaning /etc/iproute2/rt_tables" \
            "Чищу /etc/iproute2/rt_tables")"
     for item in "${COUNTRIES[@]}"; do
@@ -641,12 +642,12 @@ uninstall_all() {
         fi
     done
 
-    # 8. Сохранить пустые iptables (persist)
+    # 8. Persist the now-empty iptables.
     if [ -d /etc/sysconfig ] && [ "$DRY_RUN" -eq 0 ]; then
         iptables-save > /etc/sysconfig/iptables 2>/dev/null || true
     fi
 
-    # 9. Перезагрузка systemd
+    # 9. systemd reload.
     run systemctl daemon-reload
 
     echo
