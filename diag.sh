@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# diag.sh — проверка multi-country gateway
+# diag.sh — проверка multi-WAN gateway (xray + tun2socks)
 #
 # Проверяет, что все компоненты схемы настроены и работают:
 #   - sysctl (ARP, forward, rp_filter)
@@ -156,7 +156,7 @@ check_systemd_units() {
         fail "нет /etc/systemd/system/tun2socks@.service.d/link-up.conf — tun-интерфейсы не поднимутся"
     fi
 
-    # xray и tun2socks по странам
+    # xray и tun2socks по выходам
     for item in "${COUNTRIES[@]}"; do
         local code="${item%%:*}"
         for svc in "xray@${code}.service" "tun2socks@${code}.service"; do
@@ -377,7 +377,7 @@ check_tunnels() {
         if [ "$unique_count" -eq "${#ips[@]}" ]; then
             ok "все exit-IP разные"
         else
-            warn "exit-IP повторяются — возможно, два tun'а ведут в одну страну"
+            warn "exit-IP повторяются — возможно, два tun'а ведут в один и тот же upstream"
         fi
     fi
 }

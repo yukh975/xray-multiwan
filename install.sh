@@ -1,24 +1,25 @@
 #!/bin/bash
 #
-# Multi-country gateway installer
+# Multi-WAN gateway installer (xray + tun2socks)
 #
 # Разворачивает в одном контейнере схему: N macvlan-интерфейсов на global,
 # каждый со своим IP; клиент, указывающий определённый IP как шлюз,
-# попадает через xray+tun2socks в соответствующую страну.
+# попадает через xray+tun2socks в соответствующий WAN-выход.
 #
 # Перед запуском:
 #  - в контейнере должен быть поднят интерфейс PARENT_IF (по умолчанию global)
 #    с основным IP (например, 192.168.0.230/24);
 #  - должны быть установлены xray и tun2socks (xjasonlyu);
 #  - должен быть systemd-шаблон tun2socks@.service;
-#  - для каждой страны должен быть конфиг /etc/tun2socks/<код>.yaml,
+#  - для каждого выхода должен быть конфиг /etc/tun2socks/<код>.yaml,
 #    в котором tun2socks подключается к своему xray socks5.
 #
 # Запускать от root.
 #
 # ---- КОНФИГУРАЦИЯ ----
 #
-# COUNTRIES — массив строк "код:IP:mark", по одной на страну.
+# COUNTRIES — массив строк "код:IP:mark", по одной на WAN-выход.
+# Имя переменной осталось историческим; смысл — список WAN-выходов.
 # Коды совпадают с именами файлов в /etc/tun2socks/<код>.yaml и с именами
 # инстансов tun2socks@<код>.service. Tun-интерфейсы должны называться tun<код>,
 # macvlan-интерфейсы создаются как xray-<код>.
@@ -127,7 +128,7 @@ require_configs() {
     for item in "${COUNTRIES[@]}"; do
         local code="${item%%:*}"
         [ -f "/etc/tun2socks/${code}.yaml" ] || \
-            die "Нет /etc/tun2socks/${code}.yaml для страны '${code}'"
+            die "Нет /etc/tun2socks/${code}.yaml для выхода '${code}'"
     done
 }
 
@@ -276,7 +277,7 @@ write_routing_script() {
 
     write_file /usr/local/sbin/setup-routing.sh 755 <<EOF
 #!/bin/bash
-# Policy routing для multi-country tun
+# Policy routing для multi-WAN tun
 
 # Ждём появления tun-интерфейсов (до 30 сек)
 for t in${wait_tun_list}; do
@@ -324,7 +325,7 @@ write_routing_unit() {
 
     write_file /etc/systemd/system/setup-routing.service <<EOF
 [Unit]
-Description=Policy routing for multi-country tun
+Description=Policy routing for multi-WAN tun
 After=${after_list}
 Wants=setup-macvlan.service
 

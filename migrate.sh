@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# migrate.sh — перевод multi-country gateway на новую адресацию.
+# migrate.sh — перевод multi-WAN gateway на новую адресацию.
 #
 # Предполагается, что на хосте PVE уже сменены адреса родительского
 # интерфейса (global) и контейнер перезагружен с новым IP/маской.
@@ -57,7 +57,7 @@ while [ $# -gt 0 ]; do
             cat <<'HELP'
 Usage: migrate.sh [options]
 
-Переводит multi-country gateway на новую адресацию.
+Переводит multi-WAN gateway на новую адресацию.
 Параметры новой адресации задаются в блоке NEW_* в начале скрипта.
 
 Options:

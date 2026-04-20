@@ -1,6 +1,6 @@
 **🇬🇧 English** | [🇷🇺 Русский](README_RU.md)
 
-# Multi-country gateway in a single container
+# Multi-WAN gateway on xray + tun2socks
 
 [![Shell](https://img.shields.io/badge/shell-bash-121011?logo=gnu-bash&logoColor=white)](#)
 [![Linux](https://img.shields.io/badge/Linux-Debian%20%7C%20ALT-FCC624?logo=linux&logoColor=black)](#)
@@ -9,7 +9,7 @@
 [![tun2socks](https://img.shields.io/badge/tun2socks-xjasonlyu-green)](https://github.com/xjasonlyu/tun2socks)
 [![Idempotent](https://img.shields.io/badge/install-idempotent-success)](#re-running-installsh-on-a-live-system)
 
-A Proxmox container running multiple xray+tun2socks stacks (one per country). The client selects a country by pointing its default gateway at a different IP: `.232` → France, `.233` → Sweden, `.234` → Finland.
+A single Proxmox container running multiple xray+tun2socks stacks — one per WAN exit. The client picks an exit by pointing its default gateway at a different IP: e.g. `.232` → France, `.233` → Sweden, `.234` → Finland.
 
 ## Architecture
 
@@ -49,7 +49,7 @@ Client (192.168.0.245)
    lxc.cgroup2.devices.allow: c 10:200 rwm
    lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
    ```
-3. **xray** installed as a systemd template `xray@.service`, one instance per country:
+3. **xray** installed as a systemd template `xray@.service`, one instance per exit:
    - `xray@fr` listens on socks5 at `192.168.0.232:10808`
    - `xray@se` listens on socks5 at `192.168.0.233:10808`
    - `xray@fi` listens on socks5 at `192.168.0.234:10808`
@@ -232,7 +232,7 @@ chmod +x /usr/local/sbin/setup-routing.sh
 
 cat > /etc/systemd/system/setup-routing.service <<'EOF'
 [Unit]
-Description=Policy routing for multi-country tun
+Description=Policy routing for multi-WAN tun
 After=setup-macvlan.service iptables.service tun2socks@fr.service tun2socks@se.service tun2socks@fi.service xray@fr.service xray@se.service xray@fi.service
 Wants=setup-macvlan.service
 
@@ -274,7 +274,7 @@ curl --interface tunse -s -m 10 https://api.ipify.org; echo
 curl --interface tunfi -s -m 10 https://api.ipify.org; echo
 ```
 
-You should see three **different** IPs — the exit nodes for each country.
+You should see three **different** IPs — the upstream exit for each WAN.
 
 From a Windows client:
 
@@ -308,10 +308,10 @@ What it checks:
 - **Scripts** — `/usr/local/sbin/setup-macvlan.sh` and `/usr/local/sbin/setup-routing.sh` exist and are executable.
 - **systemd units** — `setup-macvlan.service`, `setup-routing.service`, `xray@<code>`, `tun2socks@<code>` all enabled and active, plus the `tun2socks@` `link-up.conf` drop-in.
 - **Interfaces** — parent (`global`) exists; each `xray-<code>` is macvlan, has its own MAC (distinct from the parent — critical for ARP), has the expected IP, is `UP`, has `rp_filter=0`; each `tun<code>` is up with `rp_filter=0`.
-- **ip rule** — fwmark → table routing rule present for every country.
+- **ip rule** — fwmark → table routing rule present for every exit.
 - **Routing per table** — `via_<code>` has a default route through the right `tun<code>`.
 - **iptables** — mangle `-i xray-<code> → MARK` and NAT `-o tun<code> → MASQUERADE` rules present.
-- **Live connectivity** — `curl --interface tun<code> https://api.ipify.org` for each country, plus a check that all exit IPs are distinct.
+- **Live connectivity** — `curl --interface tun<code> https://api.ipify.org` for each exit, plus a check that all exit IPs are distinct.
 
 ### Manual commands
 
@@ -346,7 +346,7 @@ tcpdump -ni tunfr  -c 10 'host <client-IP> and not port 22'
 
 ## Re-running install.sh on a live system
 
-`install.sh` is idempotent — it can be safely re-applied on top of an already-configured container (e.g. when changing the country list or bumping a version).
+`install.sh` is idempotent — it can be safely re-applied on top of an already-configured container (e.g. when changing the exit list or bumping a version).
 
 **Files overwritten with identical content (safe):**
 
@@ -388,17 +388,17 @@ bash install.sh --dry-run
 
 In dry-run mode the script prints every command it would execute and every file it would create, without making any real changes. Preconditions (interface presence, tun2socks, configs, xray units) are still checked — dry-run only makes sense on an already-prepared system.
 
-To change the country list, edit the `COUNTRIES` array at the top of the script and re-run — it's idempotent and will reconfigure everything (including mangle rules), but only for artifacts it manages (scripts, units, and mangle rules are fully regenerated).
+To change the exit list, edit the `COUNTRIES` array at the top of the script and re-run — it's idempotent and will reconfigure everything (including mangle rules), but only for artifacts it manages (scripts, units, and mangle rules are fully regenerated). The array name stayed `COUNTRIES` for historical reasons; conceptually these entries are WAN exits.
 
-**What does NOT get cleaned up automatically when shrinking the country list:**
+**What does NOT get cleaned up automatically when shrinking the exit list:**
 
 - Orphaned macvlan interfaces (remove manually with `ip link del xray-<code>`).
 - Stale entries in `/etc/iproute2/rt_tables` (harmless, but can be cleaned up).
 - Previously-enabled `xray@<code>` and `tun2socks@<code>` services — disable them manually with `systemctl disable --now`.
 
-## Adding a new country
+## Adding a new exit
 
-To add e.g. the Netherlands (code `nl`, IP `.235`, tun `tunnl`, xray socks5 on `.235:10808`):
+To add e.g. a Netherlands exit (code `nl`, IP `.235`, tun `tunnl`, xray socks5 on `.235:10808`):
 
 1. Prepare an xray config for `xray@nl` and `/etc/tun2socks/nl.yaml`.
 2. Add `103 via_nl` to `/etc/iproute2/rt_tables`.
@@ -412,7 +412,7 @@ To add e.g. the Netherlands (code `nl`, IP `.235`, tun `tunnl`, xray socks5 on `
 6. In `setup-routing.service` add `tun2socks@nl.service xray@nl.service` to `After=`.
 7. Enable and start: `systemctl enable --now xray@nl tun2socks@nl`, then `systemctl restart setup-routing.service`.
 
-Or — simpler — edit the `COUNTRIES` array in `install.sh` and re-run it. It's idempotent and will reconfigure everything including the new country.
+Or — simpler — edit the `COUNTRIES` array in `install.sh` and re-run it. It's idempotent and will reconfigure everything including the new exit.
 
 ## Migration to a new address plan
 
@@ -434,7 +434,7 @@ NEW_COUNTRIES=(
 ```
 
 - `NEW_PARENT_IP` / `NEW_NETMASK_BITS` — the new address and prefix on `global`. Must match what you configured on the PVE host side.
-- `NEW_COUNTRIES` — same `code:IP:mark` format as `install.sh`. Country codes and fwmarks stay the same; only IPs change.
+- `NEW_COUNTRIES` — same `code:IP:mark` format as `install.sh`. Exit codes and fwmarks stay the same; only IPs change.
 
 ### Precondition: change the IP on the PVE host first
 
@@ -458,7 +458,7 @@ If `global` isn't on the expected subnet yet, the script stops with the exact `p
 
 1. **Checks** — `global` is on `NEW_PARENT_IP/NEW_NETMASK_BITS`; `install.sh`, `diag.sh` exist at the expected paths (`/root/files/` by default, override via `INSTALL_SH=` / `DIAG_SH=`).
 2. **Backup** — `/etc/xray/<code>.json`, `/etc/tun2socks/<code>.yaml`, `install.sh`, `diag.sh` are copied to `/root/migrate-backup-<YYYYMMDD-HHMMSS>/`.
-3. **xray configs** — rewrites the `"listen"` field in each `/etc/xray/<code>.json` to the new per-country IP.
+3. **xray configs** — rewrites the `"listen"` field in each `/etc/xray/<code>.json` to the new per-exit IP.
 4. **tun2socks configs** — rewrites `proxy: socks5://<old-ip>:10808` to the new IP in each `/etc/tun2socks/<code>.yaml`.
 5. **install.sh / diag.sh** — rewrites the `COUNTRIES` array and `NETMASK_BITS` value in both scripts using `awk` (old block removed, new block inserted in place).
 6. **Strip old IPs** — any address still sitting on `xray-<code>` interfaces that isn't in the new plan gets removed with `ip addr del`.
