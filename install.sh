@@ -202,10 +202,67 @@ require_parent_if() {
 }
 
 require_tun2socks() {
-    [ -x /usr/bin/tun2socks ] || die "$(t "/usr/bin/tun2socks not found" "/usr/bin/tun2socks не найден")"
-    [ -f /usr/lib/systemd/system/tun2socks@.service ] || \
-        die "$(t "tun2socks@.service not found in /usr/lib/systemd/system/" \
-               "tun2socks@.service не найден в /usr/lib/systemd/system/")"
+    if [ ! -x /usr/bin/tun2socks ]; then
+        if [ "$LANG_CODE" = ru ]; then
+            cat >&2 <<'EOF'
+ОШИБКА: /usr/bin/tun2socks не найден.
+
+Как установить (xjasonlyu/tun2socks):
+  ARCH=$(uname -m); case "$ARCH" in x86_64) A=amd64;; aarch64) A=arm64;; *) A=$ARCH;; esac
+  curl -L -o /tmp/tun2socks.zip \
+    https://github.com/xjasonlyu/tun2socks/releases/latest/download/tun2socks-linux-${A}.zip
+  unzip -p /tmp/tun2socks.zip > /usr/bin/tun2socks && chmod +x /usr/bin/tun2socks
+
+Шаблон systemd-юнита (/usr/lib/systemd/system/tun2socks@.service) —
+см. в README, раздел «Prerequisites».
+EOF
+        else
+            cat >&2 <<'EOF'
+ERROR: /usr/bin/tun2socks not found.
+
+How to install (xjasonlyu/tun2socks):
+  ARCH=$(uname -m); case "$ARCH" in x86_64) A=amd64;; aarch64) A=arm64;; *) A=$ARCH;; esac
+  curl -L -o /tmp/tun2socks.zip \
+    https://github.com/xjasonlyu/tun2socks/releases/latest/download/tun2socks-linux-${A}.zip
+  unzip -p /tmp/tun2socks.zip > /usr/bin/tun2socks && chmod +x /usr/bin/tun2socks
+
+systemd unit template (/usr/lib/systemd/system/tun2socks@.service) —
+see the "Prerequisites" section in README.
+EOF
+        fi
+        exit 1
+    fi
+    if [ ! -f /usr/lib/systemd/system/tun2socks@.service ]; then
+        die "$(t "tun2socks@.service not found in /usr/lib/systemd/system/ — see README (Prerequisites)" \
+               "tun2socks@.service не найден в /usr/lib/systemd/system/ — см. README (Prerequisites)")"
+    fi
+}
+
+require_xray() {
+    if ! command -v xray >/dev/null 2>&1 && [ ! -x /usr/local/bin/xray ] && [ ! -x /usr/bin/xray ]; then
+        if [ "$LANG_CODE" = ru ]; then
+            cat >&2 <<'EOF'
+ОШИБКА: бинарник xray не найден (искал в PATH, /usr/local/bin, /usr/bin).
+
+Как установить (XTLS/Xray-core, официальный скрипт):
+  bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+
+После установки положи per-exit конфиги в ${XRAY_CONFDIR}/<code>.json
+(по одному на каждый WAN-выход из COUNTRIES).
+EOF
+        else
+            cat >&2 <<'EOF'
+ERROR: xray binary not found (checked PATH, /usr/local/bin, /usr/bin).
+
+How to install (XTLS/Xray-core, official script):
+  bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+
+Then put per-exit configs at ${XRAY_CONFDIR}/<code>.json
+(one per WAN exit in COUNTRIES).
+EOF
+        fi
+        exit 1
+    fi
 }
 
 require_configs() {
@@ -224,8 +281,8 @@ require_xray_units() {
     if [ ! -f /usr/lib/systemd/system/xray@.service ] && \
        [ ! -f /etc/systemd/system/xray@.service ] && \
        [ ! -f /lib/systemd/system/xray@.service ]; then
-        die "$(t "xray@.service systemd template not found" \
-               "Не найден systemd-шаблон xray@.service")"
+        die "$(t "xray@.service systemd template not found — install xray via XTLS/Xray-install and see README (Prerequisites)" \
+               "systemd-шаблон xray@.service не найден — поставь xray через XTLS/Xray-install и см. README (Prerequisites)")"
     fi
 }
 
@@ -618,9 +675,10 @@ main() {
     fi
 
     require_parent_if
+    require_xray
+    require_xray_units
     require_tun2socks
     require_configs
-    require_xray_units
 
     write_sysctl
     write_rt_tables
