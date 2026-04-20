@@ -281,7 +281,7 @@ restart_xray() {
 run_install() {
     log "$(t "Running install.sh --install" "Запускаю install.sh --install")"
     if [ "$DRY_RUN" -eq 1 ]; then
-        info "+ bash $INSTALL_SH --install"
+        bash "$INSTALL_SH" --install --dry-run
         return 0
     fi
     bash "$INSTALL_SH" --install

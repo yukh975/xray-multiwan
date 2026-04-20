@@ -77,6 +77,7 @@ print_help() {
   bash install.sh --install
   bash install.sh --install --dry-run
   bash install.sh --uninstall
+  bash install.sh --uninstall --dry-run
 HELP
     else
         cat <<'HELP'
@@ -101,6 +102,7 @@ Examples:
   bash install.sh --install
   bash install.sh --install --dry-run
   bash install.sh --uninstall
+  bash install.sh --uninstall --dry-run
 HELP
     fi
 }
@@ -587,6 +589,7 @@ uninstall_all() {
         # Drop the NAT rule if present (loop in case it was added more than once).
         while iptables -t nat -C POSTROUTING -o "tun${code}" -j MASQUERADE 2>/dev/null; do
             run iptables -t nat -D POSTROUTING -o "tun${code}" -j MASQUERADE
+            [ "$DRY_RUN" -eq 1 ] && break
         done
     done
 
@@ -600,6 +603,7 @@ uninstall_all() {
         # Loop the del in case the rule was added multiple times.
         while ip rule show | grep -qE "fwmark 0x$(printf '%x' "$mark")\b.*lookup ${tbl}"; do
             run ip rule del fwmark "$mark" table "$tbl" 2>/dev/null || break
+            [ "$DRY_RUN" -eq 1 ] && break
         done
         run ip route flush table "$tbl" 2>/dev/null || true
     done
