@@ -402,13 +402,15 @@ All services get `restart`'ed (macvlan → xray@* → tun2socks@* → setup-rout
 **Running it:**
 
 ```bash
-bash install.sh
+bash install.sh --install
 ```
+
+Running `bash install.sh` with no arguments prints the help.
 
 **Previewing without applying changes:**
 
 ```bash
-bash install.sh --dry-run
+bash install.sh --install --dry-run
 ```
 
 In dry-run mode the script prints every command it would execute and every file it would create, without making any real changes. Preconditions (interface presence, tun2socks, configs, xray units) are still checked — dry-run only makes sense on an already-prepared system.

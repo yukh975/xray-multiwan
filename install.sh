@@ -45,53 +45,89 @@ t() {
 }
 
 DRY_RUN=0
+INSTALL=0
 UNINSTALL=0
 
 print_help() {
     if [ "$LANG_CODE" = ru ]; then
         cat <<'HELP'
-Использование: install.sh [опции]
+Использование: install.sh <действие> [опции]
 
-Опции:
-  -n, --dry-run    Показать, что будет сделано, без внесения изменений.
+Действия (обязательно одно из):
+  -i, --install    Выполнить установку/переконфигурирование (идемпотентно).
   -u, --uninstall  Удалить всё, что создаёт install.sh (сервисы, скрипты,
                    юниты, iptables, ip rule, macvlan-интерфейсы, sysctl).
                    Конфиги /etc/xray/*.json и /etc/tun2socks/*.yaml НЕ
                    удаляются — их пишет пользователь.
+
+Опции:
+  -n, --dry-run    Показать, что будет сделано, без внесения изменений.
+                   Комбинируется с --install или --uninstall.
   -h, --help       Эта справка.
 
-Переменные окружения:
-  PARENT_IF        Родительский интерфейс для macvlan (по умолчанию: global).
-  NETMASK_BITS     Длина маски для адресов (по умолчанию: 24).
+Настройки (PARENT_IF, NETMASK_BITS, COUNTRIES) — в файле config.sh
+рядом со скриптом. Отредактируй его перед первым запуском.
+
+Примеры:
+  bash install.sh --install
+  bash install.sh --install --dry-run
+  bash install.sh --uninstall
 HELP
     else
         cat <<'HELP'
-Usage: install.sh [options]
+Usage: install.sh <action> [options]
 
-Options:
-  -n, --dry-run    Print what would be done, without applying changes.
+Actions (exactly one required):
+  -i, --install    Install / reconfigure (idempotent).
   -u, --uninstall  Remove everything install.sh creates (services, scripts,
                    units, iptables, ip rule, macvlan interfaces, sysctl).
                    User configs /etc/xray/*.json and /etc/tun2socks/*.yaml
                    are preserved.
+
+Options:
+  -n, --dry-run    Print what would be done, without applying changes.
+                   Combine with --install or --uninstall.
   -h, --help       This help.
 
-Environment variables:
-  PARENT_IF        Parent interface for macvlan (default: global).
-  NETMASK_BITS     Subnet prefix length for addresses (default: 24).
+Tunables (PARENT_IF, NETMASK_BITS, COUNTRIES) live in config.sh next to
+this script. Edit it before the first run.
+
+Examples:
+  bash install.sh --install
+  bash install.sh --install --dry-run
+  bash install.sh --uninstall
 HELP
     fi
 }
 
+# No arguments — show help and exit 0 (help is the default action now).
+if [ $# -eq 0 ]; then
+    print_help
+    exit 0
+fi
+
 while [ $# -gt 0 ]; do
     case "$1" in
-        -n|--dry-run)   DRY_RUN=1;   shift ;;
+        -i|--install)   INSTALL=1;   shift ;;
         -u|--uninstall) UNINSTALL=1; shift ;;
+        -n|--dry-run)   DRY_RUN=1;   shift ;;
         -h|--help)      print_help; exit 0 ;;
         *) echo "$(t "Unknown argument: $1" "Неизвестный аргумент: $1")" >&2
-           print_help; exit 1 ;;
+           echo >&2
+           print_help >&2
+           exit 1 ;;
     esac
 done
+
+if [ "$INSTALL" -eq 1 ] && [ "$UNINSTALL" -eq 1 ]; then
+    echo "$(t "--install and --uninstall are mutually exclusive" "--install и --uninstall взаимоисключающие")" >&2
+    exit 1
+fi
+
+if [ "$INSTALL" -eq 0 ] && [ "$UNINSTALL" -eq 0 ]; then
+    echo "$(t "No action specified. Use --install or --uninstall (see --help)." "Не указано действие. Используй --install или --uninstall (см. --help).")" >&2
+    exit 1
+fi
 
 die() {
     echo "ERROR: $*" >&2
