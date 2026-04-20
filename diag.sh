@@ -23,18 +23,18 @@
 
 set -uo pipefail
 
-# ---- КОНФИГУРАЦИЯ (должна совпадать с install.sh) ----
+# ---- unified config ----
+# Tunables live in config.sh next to this script (see install.sh for format).
+# Override via env: CONFIG_SH=/path/config.sh bash diag.sh
 
-PARENT_IF="${PARENT_IF:-global}"
-NETMASK_BITS="${NETMASK_BITS:-24}"
-
-COUNTRIES=(
-    "fr:192.168.0.232:100"
-    "se:192.168.0.233:101"
-    "fi:192.168.0.234:102"
-)
-
-# ---- конец конфигурации ----
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_SH="${CONFIG_SH:-$SCRIPT_DIR/config.sh}"
+if [ ! -f "$CONFIG_SH" ]; then
+    echo "ERROR: config file not found: $CONFIG_SH" >&2
+    exit 1
+fi
+# shellcheck source=config.sh disable=SC1091
+. "$CONFIG_SH"
 
 QUIET=0
 

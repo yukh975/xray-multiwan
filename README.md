@@ -59,6 +59,37 @@ Client (192.168.0.245)
    - `proxy: socks5://192.168.0.<IP>:10808` — points to the matching xray instance
 6. **iptables-service** (classic sysvinit-style) with `/etc/sysconfig/iptables`. Ships with ALT Linux by default; on Debian you may need `iptables-persistent`.
 
+## Before first run: edit `config.sh`
+
+All tunables live in [`config.sh`](config.sh), sourced by `install.sh`, `diag.sh` and `migrate.sh`. Edit it in one place:
+
+```bash
+PARENT_IF="${PARENT_IF:-global}"        # parent interface (eth0 / global / ...)
+NETMASK_BITS="${NETMASK_BITS:-24}"      # subnet prefix length
+
+COUNTRIES=(
+    "fr:192.168.0.232:100"              # code:IP:fwmark
+    "se:192.168.0.233:101"
+    "fi:192.168.0.234:102"
+)
+```
+
+Each `COUNTRIES` entry is a WAN exit: `code` matches `/etc/tun2socks/<code>.yaml`, `xray@<code>.service`, `tun<code>` and `xray-<code>`; `IP` is the macvlan address the client sets as its default gateway; `fwmark` is any unique integer (convention: 100+).
+
+Env vars override the file values for one-off runs:
+
+```bash
+PARENT_IF=eth0 bash install.sh
+```
+
+## Uninstall
+
+```bash
+bash install.sh --uninstall
+```
+
+Removes every artifact `install.sh` creates — services, scripts, systemd units, iptables rules, `ip rule` entries, macvlan interfaces, sysctl drop-ins. User configs (`/etc/xray/*.json`, `/etc/tun2socks/*.yaml`) and binaries are preserved.
+
 ## Step-by-step installation
 
 ### Step 1. Bring up three IPs on `global` via macvlan
@@ -299,7 +330,7 @@ bash diag.sh          # full report
 bash diag.sh --quiet  # summary only
 ```
 
-Exit code: `0` if everything is green, `1` if any check failed. The `COUNTRIES` array at the top of `diag.sh` must match `install.sh` — `migrate.sh` keeps them in sync automatically.
+Exit code: `0` if everything is green, `1` if any check failed. All scripts source the same `config.sh`, so what's checked matches what's installed automatically.
 
 What it checks:
 
@@ -388,7 +419,7 @@ bash install.sh --dry-run
 
 In dry-run mode the script prints every command it would execute and every file it would create, without making any real changes. Preconditions (interface presence, tun2socks, configs, xray units) are still checked — dry-run only makes sense on an already-prepared system.
 
-To change the exit list, edit the `COUNTRIES` array at the top of the script and re-run — it's idempotent and will reconfigure everything (including mangle rules), but only for artifacts it manages (scripts, units, and mangle rules are fully regenerated). The array name stayed `COUNTRIES` for historical reasons; conceptually these entries are WAN exits.
+To change the exit list, edit the `COUNTRIES` array in [`config.sh`](config.sh) and re-run `install.sh` — it's idempotent and will reconfigure everything (including mangle rules), but only for artifacts it manages (scripts, units, and mangle rules are fully regenerated). The array name stayed `COUNTRIES` for historical reasons; conceptually these entries are WAN exits.
 
 **What does NOT get cleaned up automatically when shrinking the exit list:**
 
@@ -412,11 +443,11 @@ To add e.g. a Netherlands exit (code `nl`, IP `.235`, tun `tunnl`, xray socks5 o
 6. In `setup-routing.service` add `tun2socks@nl.service xray@nl.service` to `After=`.
 7. Enable and start: `systemctl enable --now xray@nl tun2socks@nl`, then `systemctl restart setup-routing.service`.
 
-Or — simpler — edit the `COUNTRIES` array in `install.sh` and re-run it. It's idempotent and will reconfigure everything including the new exit.
+Or — simpler — add the new entry to the `COUNTRIES` array in [`config.sh`](config.sh) and re-run `install.sh`. It's idempotent and will reconfigure everything including the new exit.
 
 ## Migration to a new address plan
 
-Use `migrate.sh` when the whole subnet changes — your provider shuffles IPs, or you move the container to a different bridge with a different address range. It rewires xray configs, tun2socks configs, `install.sh`, `diag.sh`, and the live macvlan interfaces in one pass.
+Use `migrate.sh` when the whole subnet changes — your provider shuffles IPs, or you move the container to a different bridge with a different address range. It rewires xray configs, tun2socks configs, `config.sh`, and the live macvlan interfaces in one pass.
 
 ### Configuration
 
@@ -456,11 +487,11 @@ If `global` isn't on the expected subnet yet, the script stops with the exact `p
 
 ### What it does (in order)
 
-1. **Checks** — `global` is on `NEW_PARENT_IP/NEW_NETMASK_BITS`; `install.sh`, `diag.sh` exist at the expected paths (`/root/files/` by default, override via `INSTALL_SH=` / `DIAG_SH=`).
+1. **Checks** — `global` is on `NEW_PARENT_IP/NEW_NETMASK_BITS`; `install.sh`, `diag.sh`, `config.sh` exist at the expected paths (`/root/files/` by default, override via `INSTALL_SH=` / `DIAG_SH=` / `CONFIG_SH=`).
 2. **Backup** — `/etc/xray/<code>.json`, `/etc/tun2socks/<code>.yaml`, `install.sh`, `diag.sh` are copied to `/root/migrate-backup-<YYYYMMDD-HHMMSS>/`.
 3. **xray configs** — rewrites the `"listen"` field in each `/etc/xray/<code>.json` to the new per-exit IP.
 4. **tun2socks configs** — rewrites `proxy: socks5://<old-ip>:10808` to the new IP in each `/etc/tun2socks/<code>.yaml`.
-5. **install.sh / diag.sh** — rewrites the `COUNTRIES` array and `NETMASK_BITS` value in both scripts using `awk` (old block removed, new block inserted in place).
+5. **config.sh** — rewrites the `COUNTRIES` array and `NETMASK_BITS` value in `config.sh` (old block removed, new block inserted in place). `install.sh`/`diag.sh` read these values on their next run, so only one file needs editing.
 6. **Strip old IPs** — any address still sitting on `xray-<code>` interfaces that isn't in the new plan gets removed with `ip addr del`.
 7. **Restart xray** — `xray@<code>` reloads with the new `listen` address.
 8. **Run install.sh** — regenerates `/usr/local/sbin/setup-*.sh` and systemd units, restarts all services, saves iptables.

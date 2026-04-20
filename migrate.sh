@@ -10,7 +10,7 @@
 #   2. Делает бэкап затрагиваемых конфигов.
 #   3. Меняет IP в xray-конфигах (/etc/xray/<код>.json) — поле "listen".
 #   4. Меняет IP в tun2socks-конфигах (/etc/tun2socks/<код>.yaml) — строка proxy: socks5://...
-#   5. Обновляет COUNTRIES и NETMASK_BITS в install.sh.
+#   5. Обновляет COUNTRIES и NETMASK_BITS в config.sh.
 #   6. Снимает старые IP с macvlan-интерфейсов (если остались).
 #   7. Перезапускает xray@<код> с новыми конфигами.
 #   8. Запускает install.sh, который перегенерирует macvlan/routing/iptables под новые IP.
@@ -41,6 +41,7 @@ PARENT_IF="${PARENT_IF:-global}"
 # Пути к файлам
 INSTALL_SH="${INSTALL_SH:-/root/files/install.sh}"
 DIAG_SH="${DIAG_SH:-/root/files/diag.sh}"
+CONFIG_SH="${CONFIG_SH:-/root/files/config.sh}"
 
 XRAY_CONFDIR="/etc/xray"
 TUN2SOCKS_CONFDIR="/etc/tun2socks"
@@ -68,6 +69,7 @@ Options:
   PARENT_IF       Родительский интерфейс (default: global).
   INSTALL_SH      Путь к install.sh (default: /root/files/install.sh).
   DIAG_SH         Путь к diag.sh (default: /root/files/diag.sh).
+  CONFIG_SH       Путь к config.sh (default: /root/files/config.sh).
 HELP
             exit 0
             ;;
@@ -98,6 +100,7 @@ require_root() {
 require_files() {
     [ -f "$INSTALL_SH" ] || die "Не найден $INSTALL_SH (установи через INSTALL_SH=...)"
     [ -f "$DIAG_SH" ]    || die "Не найден $DIAG_SH (установи через DIAG_SH=...)"
+    [ -f "$CONFIG_SH" ]  || die "Не найден $CONFIG_SH (установи через CONFIG_SH=...)"
 }
 
 check_parent_ip() {
@@ -224,28 +227,11 @@ update_tun2socks_configs() {
     done
 }
 
-update_install_sh() {
-    log "Обновляю COUNTRIES и NETMASK_BITS в $INSTALL_SH"
-    _update_sh_config "$INSTALL_SH"
-}
-
-update_diag_sh() {
-    log "Обновляю COUNTRIES в $DIAG_SH"
-    _update_sh_config "$DIAG_SH"
-}
-
-# Внутренняя функция: обновляет блок COUNTRIES и NETMASK_BITS
-# в install.sh / diag.sh / любом другом скрипте с этой структурой.
-_update_sh_config() {
-    local target="$1"
-
-    if [ ! -f "$target" ]; then
-        info "$target: нет файла, пропуск"
-        return 0
-    fi
+update_config_sh() {
+    log "Обновляю NETMASK_BITS и COUNTRIES в $CONFIG_SH"
 
     if [ "$DRY_RUN" -eq 1 ]; then
-        info "в $target был бы установлен NETMASK_BITS=$NEW_NETMASK_BITS"
+        info "в $CONFIG_SH был бы установлен NETMASK_BITS=$NEW_NETMASK_BITS"
         for item in "${NEW_COUNTRIES[@]}"; do
             info "  $item"
         done
@@ -274,7 +260,7 @@ _update_sh_config() {
         }
         in_countries { next }
         { print }
-    ' "$target" > "$tmp"
+    ' "$CONFIG_SH" > "$tmp"
 
     # Вставляем актуальный блок COUNTRIES
     local countries_block=""
@@ -290,7 +276,7 @@ _update_sh_config() {
         { print }
     ' "$tmp" > "${tmp}.2"
 
-    mv "${tmp}.2" "$target"
+    mv "${tmp}.2" "$CONFIG_SH"
     rm -f "$tmp"
 }
 
@@ -360,8 +346,7 @@ main() {
     make_backup
     update_xray_configs
     update_tun2socks_configs
-    update_install_sh
-    update_diag_sh
+    update_config_sh
     cleanup_old_ips
     restart_xray
     run_install

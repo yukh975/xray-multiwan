@@ -15,52 +15,81 @@
 #    в котором tun2socks подключается к своему xray socks5.
 #
 # Запускать от root.
-#
-# ---- КОНФИГУРАЦИЯ ----
-#
-# COUNTRIES — массив строк "код:IP:mark", по одной на WAN-выход.
-# Имя переменной осталось историческим; смысл — список WAN-выходов.
-# Коды совпадают с именами файлов в /etc/tun2socks/<код>.yaml и с именами
-# инстансов tun2socks@<код>.service. Tun-интерфейсы должны называться tun<код>,
-# macvlan-интерфейсы создаются как xray-<код>.
-#
-# PARENT_IF — родительский физический/veth интерфейс, на котором делаем macvlan.
-# NETMASK_BITS — маска подсети для всех IP (обычно 24).
 
 set -uo pipefail
 
-PARENT_IF="${PARENT_IF:-global}"
-NETMASK_BITS="${NETMASK_BITS:-24}"
+# ---- unified config ----
+# All tunables (PARENT_IF, NETMASK_BITS, COUNTRIES) live in config.sh next
+# to this script. Edit config.sh, not this file.
+# Override per-run via env: PARENT_IF=eth0 CONFIG_SH=/path/config.sh bash install.sh
 
-COUNTRIES=(
-    "fr:192.168.0.232:100"
-    "se:192.168.0.233:101"
-    "fi:192.168.0.234:102"
-)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_SH="${CONFIG_SH:-$SCRIPT_DIR/config.sh}"
+if [ ! -f "$CONFIG_SH" ]; then
+    echo "ERROR: config file not found: $CONFIG_SH" >&2
+    echo "       set CONFIG_SH=/path/to/config.sh or place config.sh next to install.sh" >&2
+    exit 1
+fi
+# shellcheck source=config.sh disable=SC1091
+. "$CONFIG_SH"
 
-# ---- конец конфигурации ----
+# ---- i18n ----
+case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in
+    ru*|RU*) LANG_CODE=ru ;;
+    *)       LANG_CODE=en ;;
+esac
+
+# t "english" "russian" — pick message by current locale
+t() {
+    if [ "$LANG_CODE" = ru ]; then echo "$2"; else echo "$1"; fi
+}
 
 DRY_RUN=0
+UNINSTALL=0
 
 print_help() {
-    cat <<'HELP'
-Usage: install.sh [options]
+    if [ "$LANG_CODE" = ru ]; then
+        cat <<'HELP'
+Использование: install.sh [опции]
 
-Options:
+Опции:
   -n, --dry-run    Показать, что будет сделано, без внесения изменений.
+  -u, --uninstall  Удалить всё, что создаёт install.sh (сервисы, скрипты,
+                   юниты, iptables, ip rule, macvlan-интерфейсы, sysctl).
+                   Конфиги /etc/xray/*.json и /etc/tun2socks/*.yaml НЕ
+                   удаляются — их пишет пользователь.
   -h, --help       Эта справка.
 
 Переменные окружения:
   PARENT_IF        Родительский интерфейс для macvlan (по умолчанию: global).
   NETMASK_BITS     Длина маски для адресов (по умолчанию: 24).
 HELP
+    else
+        cat <<'HELP'
+Usage: install.sh [options]
+
+Options:
+  -n, --dry-run    Print what would be done, without applying changes.
+  -u, --uninstall  Remove everything install.sh creates (services, scripts,
+                   units, iptables, ip rule, macvlan interfaces, sysctl).
+                   User configs /etc/xray/*.json and /etc/tun2socks/*.yaml
+                   are preserved.
+  -h, --help       This help.
+
+Environment variables:
+  PARENT_IF        Parent interface for macvlan (default: global).
+  NETMASK_BITS     Subnet prefix length for addresses (default: 24).
+HELP
+    fi
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        -n|--dry-run) DRY_RUN=1; shift ;;
-        -h|--help)    print_help; exit 0 ;;
-        *)            echo "Неизвестный аргумент: $1" >&2; print_help; exit 1 ;;
+        -n|--dry-run)   DRY_RUN=1;   shift ;;
+        -u|--uninstall) UNINSTALL=1; shift ;;
+        -h|--help)      print_help; exit 0 ;;
+        *) echo "$(t "Unknown argument: $1" "Неизвестный аргумент: $1")" >&2
+           print_help; exit 1 ;;
     esac
 done
 
@@ -84,14 +113,13 @@ run() {
 }
 
 # write_file — создаёт файл с содержимым (читает из stdin).
-# В dry-run режиме печатает путь и содержимое, не пишет реально.
 write_file() {
     local path="$1"
-    local mode="${2:-}"  # optional, e.g. 755
+    local mode="${2:-}"
 
     if [ "$DRY_RUN" -eq 1 ]; then
-        echo "  + записал бы файл: $path${mode:+ (mode $mode)}"
-        echo "  +--- содержимое ---"
+        echo "  + $(t "would write file:" "записал бы файл:") $path${mode:+ (mode $mode)}"
+        echo "  +--- $(t "content" "содержимое") ---"
         sed 's/^/  + | /'
         echo "  +------------------"
     else
@@ -106,45 +134,63 @@ write_file() {
     return 0
 }
 
+# remove_file — удаляет файл (или печатает в dry-run).
+remove_file() {
+    local path="$1"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        if [ -e "$path" ]; then
+            echo "  + $(t "would remove:" "удалил бы:") $path"
+        else
+            echo "  = $(t "missing (skip):" "отсутствует, пропуск:") $path"
+        fi
+    else
+        [ -e "$path" ] && rm -f "$path"
+    fi
+}
+
 require_root() {
     if [ "$DRY_RUN" -eq 1 ]; then
         return 0
     fi
-    [ "$(id -u)" -eq 0 ] || die "Запускать от root"
+    [ "$(id -u)" -eq 0 ] || die "$(t "Must run as root" "Запускать от root")"
 }
 
 require_parent_if() {
     ip link show "$PARENT_IF" &>/dev/null || \
-        die "Интерфейс $PARENT_IF не найден. Задай PARENT_IF=<имя> или проверь сеть."
+        die "$(t "Interface $PARENT_IF not found. Set PARENT_IF=<name> or check the network." \
+               "Интерфейс $PARENT_IF не найден. Задай PARENT_IF=<имя> или проверь сеть.")"
 }
 
 require_tun2socks() {
-    [ -x /usr/bin/tun2socks ] || die "/usr/bin/tun2socks не найден"
+    [ -x /usr/bin/tun2socks ] || die "$(t "/usr/bin/tun2socks not found" "/usr/bin/tun2socks не найден")"
     [ -f /usr/lib/systemd/system/tun2socks@.service ] || \
-        die "tun2socks@.service не найден в /usr/lib/systemd/system/"
+        die "$(t "tun2socks@.service not found in /usr/lib/systemd/system/" \
+               "tun2socks@.service не найден в /usr/lib/systemd/system/")"
 }
 
 require_configs() {
     for item in "${COUNTRIES[@]}"; do
         local code="${item%%:*}"
         [ -f "/etc/tun2socks/${code}.yaml" ] || \
-            die "Нет /etc/tun2socks/${code}.yaml для выхода '${code}'"
+            die "$(t "Missing /etc/tun2socks/${code}.yaml for exit '${code}'" \
+                   "Нет /etc/tun2socks/${code}.yaml для выхода '${code}'")"
     done
 }
 
 require_xray_units() {
-    # Проверяем, что шаблон xray@.service существует.
-    # Конкретные инстансы xray@<code>.service — порождаются динамически
-    # и в list-unit-files не отображаются.
+    # Шаблон xray@.service должен существовать. Конкретные инстансы
+    # xray@<code>.service порождаются динамически и в list-unit-files
+    # не отображаются.
     if [ ! -f /usr/lib/systemd/system/xray@.service ] && \
        [ ! -f /etc/systemd/system/xray@.service ] && \
        [ ! -f /lib/systemd/system/xray@.service ]; then
-        die "Не найден systemd-шаблон xray@.service"
+        die "$(t "xray@.service systemd template not found" \
+               "Не найден systemd-шаблон xray@.service")"
     fi
 }
 
 write_sysctl() {
-    log "Записываю sysctl"
+    log "$(t "Writing sysctl config" "Записываю sysctl")"
 
     write_file /etc/sysctl.d/99-arp.conf <<'EOF'
 net.ipv4.conf.all.arp_ignore = 1
@@ -164,20 +210,23 @@ EOF
 }
 
 write_rt_tables() {
-    log "Добавляю таблицы маршрутизации в /etc/iproute2/rt_tables"
+    log "$(t "Adding routing tables to /etc/iproute2/rt_tables" \
+           "Добавляю таблицы маршрутизации в /etc/iproute2/rt_tables")"
     for item in "${COUNTRIES[@]}"; do
         local code="${item%%:*}"
         local mark="${item##*:}"
         local tbl="via_${code}"
         if ! grep -qE "^[[:space:]]*${mark}[[:space:]]+${tbl}$" /etc/iproute2/rt_tables 2>/dev/null; then
             if [ "$DRY_RUN" -eq 1 ]; then
-                echo "  + добавил бы в /etc/iproute2/rt_tables: ${mark} ${tbl}"
+                echo "  + $(t "would append to /etc/iproute2/rt_tables:" \
+                            "добавил бы в /etc/iproute2/rt_tables:") ${mark} ${tbl}"
             else
                 echo "${mark} ${tbl}" >> /etc/iproute2/rt_tables
             fi
         else
             if [ "$DRY_RUN" -eq 1 ]; then
-                echo "  = уже есть в /etc/iproute2/rt_tables: ${mark} ${tbl}"
+                echo "  = $(t "already in /etc/iproute2/rt_tables:" \
+                            "уже есть в /etc/iproute2/rt_tables:") ${mark} ${tbl}"
             fi
         fi
     done
@@ -185,7 +234,8 @@ write_rt_tables() {
 }
 
 write_tun2socks_dropin() {
-    log "Добавляю ExecStartPost для tun2socks@.service (поднятие tun)"
+    log "$(t "Adding ExecStartPost drop-in for tun2socks@.service" \
+           "Добавляю ExecStartPost для tun2socks@.service (поднятие tun)")"
     write_file /etc/systemd/system/tun2socks@.service.d/link-up.conf <<'EOF'
 [Service]
 ExecStartPost=/bin/sh -c 'for i in 1 2 3 4 5; do ip link show tun%i >/dev/null 2>&1 && break; sleep 1; done; ip link set tun%i up'
@@ -193,7 +243,8 @@ EOF
 }
 
 write_macvlan_script() {
-    log "Создаю /usr/local/sbin/setup-macvlan.sh"
+    log "$(t "Writing /usr/local/sbin/setup-macvlan.sh" \
+           "Создаю /usr/local/sbin/setup-macvlan.sh")"
 
     local pairs=""
     for item in "${COUNTRIES[@]}"; do
@@ -221,7 +272,7 @@ EOF
 }
 
 write_macvlan_unit() {
-    log "Создаю setup-macvlan.service"
+    log "$(t "Writing setup-macvlan.service" "Создаю setup-macvlan.service")"
 
     local before_list=""
     for item in "${COUNTRIES[@]}"; do
@@ -246,17 +297,15 @@ EOF
 }
 
 write_routing_script() {
-    log "Создаю /usr/local/sbin/setup-routing.sh"
+    log "$(t "Writing /usr/local/sbin/setup-routing.sh" \
+           "Создаю /usr/local/sbin/setup-routing.sh")"
 
-    # Собираем секции скрипта на основе COUNTRIES
     local tuns=""
     local xrays=""
     local wait_tun_list=""
     local default_routes=""
     local ip_rules=""
     local mangle_rules=""
-    local nat_loop=""
-    local rp_list=""
 
     for item in "${COUNTRIES[@]}"; do
         local code="${item%%:*}"
@@ -315,7 +364,7 @@ EOF
 }
 
 write_routing_unit() {
-    log "Создаю setup-routing.service"
+    log "$(t "Writing setup-routing.service" "Создаю setup-routing.service")"
 
     local after_list="setup-macvlan.service iptables.service"
     for item in "${COUNTRIES[@]}"; do
@@ -340,7 +389,8 @@ EOF
 }
 
 enable_services() {
-    log "Перезагружаю systemd и включаю сервисы"
+    log "$(t "Reloading systemd and enabling services" \
+           "Перезагружаю systemd и включаю сервисы")"
     run systemctl daemon-reload
 
     run systemctl enable setup-macvlan.service
@@ -354,10 +404,10 @@ enable_services() {
 }
 
 start_services() {
-    log "Запускаю сервисы"
+    log "$(t "Starting services" "Запускаю сервисы")"
     run systemctl restart setup-macvlan.service
 
-    # xray слушает socks5 на адресах macvlan — поэтому стартует после него,
+    # xray слушает socks5 на адресах macvlan — стартует после macvlan,
     # но до tun2socks, который к xray подключается.
     for item in "${COUNTRIES[@]}"; do
         local code="${item%%:*}"
@@ -377,11 +427,11 @@ start_services() {
 
 verify() {
     if [ "$DRY_RUN" -eq 1 ]; then
-        log "Пропуск verify (dry-run)"
+        log "$(t "Skipping verify (dry-run)" "Пропуск verify (dry-run)")"
         return 0
     fi
 
-    log "Проверяю результат"
+    log "$(t "Verifying result" "Проверяю результат")"
 
     echo "--- IP addresses ---"
     ip -4 addr show | grep -E 'inet |^[0-9]+:'
@@ -396,7 +446,8 @@ verify() {
     iptables -t nat -L POSTROUTING -v -n
 
     echo
-    log "Проверка связности (curl через каждый tun):"
+    log "$(t "Connectivity check (curl per tun):" \
+           "Проверка связности (curl через каждый tun):")"
     for item in "${COUNTRIES[@]}"; do
         local code="${item%%:*}"
         local tun="tun${code}"
@@ -409,13 +460,123 @@ verify() {
     done
 }
 
+# ---- uninstall ----
+
+uninstall_all() {
+    log "$(t "Uninstalling multi-WAN gateway" \
+           "Удаляю multi-WAN gateway")"
+
+    # 1. Остановить и отключить инстансные сервисы
+    for item in "${COUNTRIES[@]}"; do
+        local code="${item%%:*}"
+        run systemctl stop    "tun2socks@${code}.service" 2>/dev/null || true
+        run systemctl disable "tun2socks@${code}.service" 2>/dev/null || true
+        run systemctl stop    "xray@${code}.service"      2>/dev/null || true
+        run systemctl disable "xray@${code}.service"      2>/dev/null || true
+    done
+
+    # 2. Остановить и отключить собственные юниты
+    run systemctl stop    setup-routing.service 2>/dev/null || true
+    run systemctl stop    setup-macvlan.service 2>/dev/null || true
+    run systemctl disable setup-routing.service 2>/dev/null || true
+    run systemctl disable setup-macvlan.service 2>/dev/null || true
+
+    # 3. Чистим iptables
+    log "$(t "Clearing iptables rules" "Чищу правила iptables")"
+    run iptables -t mangle -F PREROUTING 2>/dev/null || true
+    for item in "${COUNTRIES[@]}"; do
+        local code="${item%%:*}"
+        # Удаляем NAT-правило, если есть (повторяем пока -D возвращает 0)
+        while iptables -t nat -C POSTROUTING -o "tun${code}" -j MASQUERADE 2>/dev/null; do
+            run iptables -t nat -D POSTROUTING -o "tun${code}" -j MASQUERADE
+        done
+    done
+
+    # 4. Снять ip rule
+    log "$(t "Removing ip rules and routing tables" \
+           "Удаляю ip rule и таблицы маршрутов")"
+    for item in "${COUNTRIES[@]}"; do
+        local code="${item%%:*}"
+        local mark="${item##*:}"
+        local tbl="via_${code}"
+        # del в цикле — вдруг правило добавлено несколько раз
+        while ip rule show | grep -qE "fwmark 0x$(printf '%x' "$mark")\b.*lookup ${tbl}"; do
+            run ip rule del fwmark "$mark" table "$tbl" 2>/dev/null || break
+        done
+        run ip route flush table "$tbl" 2>/dev/null || true
+    done
+
+    # 5. Удалить macvlan-интерфейсы
+    log "$(t "Removing macvlan interfaces" "Удаляю macvlan-интерфейсы")"
+    for item in "${COUNTRIES[@]}"; do
+        local code="${item%%:*}"
+        if ip link show "xray-${code}" &>/dev/null; then
+            run ip link del "xray-${code}" 2>/dev/null || true
+        fi
+    done
+
+    # 6. Удалить файлы
+    log "$(t "Removing scripts, units and sysctl files" \
+           "Удаляю скрипты, юниты и sysctl-файлы")"
+    remove_file /usr/local/sbin/setup-macvlan.sh
+    remove_file /usr/local/sbin/setup-routing.sh
+    remove_file /etc/systemd/system/setup-macvlan.service
+    remove_file /etc/systemd/system/setup-routing.service
+    remove_file /etc/systemd/system/tun2socks@.service.d/link-up.conf
+    if [ "$DRY_RUN" -eq 0 ]; then
+        rmdir /etc/systemd/system/tun2socks@.service.d 2>/dev/null || true
+    fi
+    remove_file /etc/sysctl.d/99-arp.conf
+    remove_file /etc/sysctl.d/99-forward.conf
+
+    # 7. Удалить записи из /etc/iproute2/rt_tables
+    log "$(t "Cleaning /etc/iproute2/rt_tables" \
+           "Чищу /etc/iproute2/rt_tables")"
+    for item in "${COUNTRIES[@]}"; do
+        local code="${item%%:*}"
+        local mark="${item##*:}"
+        local tbl="via_${code}"
+        if [ "$DRY_RUN" -eq 1 ]; then
+            echo "  + $(t "would remove line:" "удалил бы строку:") ${mark} ${tbl}"
+        else
+            sed -i -E "/^[[:space:]]*${mark}[[:space:]]+${tbl}[[:space:]]*$/d" \
+                /etc/iproute2/rt_tables 2>/dev/null || true
+        fi
+    done
+
+    # 8. Сохранить пустые iptables (persist)
+    if [ -d /etc/sysconfig ] && [ "$DRY_RUN" -eq 0 ]; then
+        iptables-save > /etc/sysconfig/iptables 2>/dev/null || true
+    fi
+
+    # 9. Перезагрузка systemd
+    run systemctl daemon-reload
+
+    echo
+    log "$(t "Uninstall done. User configs kept: /etc/xray/*.json, /etc/tun2socks/*.yaml, xray/tun2socks binaries." \
+           "Удаление завершено. Сохранены: /etc/xray/*.json, /etc/tun2socks/*.yaml, бинарники xray/tun2socks.")"
+}
+
+# ---- main ----
+
 main() {
     if [ "$DRY_RUN" -eq 1 ]; then
-        echo "===== DRY RUN: команды и файлы выводятся, реальных изменений не будет ====="
+        echo "===== $(t "DRY RUN: no real changes will be made" "DRY RUN: команды и файлы выводятся, реальных изменений не будет") ====="
         echo
     fi
 
     require_root
+
+    if [ "$UNINSTALL" -eq 1 ]; then
+        uninstall_all
+        echo
+        if [ "$DRY_RUN" -eq 1 ]; then
+            log "$(t "Dry-run finished. Re-run without --dry-run to apply." \
+                   "Dry-run завершён. Запусти без --dry-run, чтобы применить.")"
+        fi
+        return 0
+    fi
+
     require_parent_if
     require_tun2socks
     require_configs
@@ -437,9 +598,11 @@ main() {
 
     echo
     if [ "$DRY_RUN" -eq 1 ]; then
-        log "Dry-run завершён. Запусти без --dry-run, чтобы применить изменения."
+        log "$(t "Dry-run finished. Re-run without --dry-run to apply." \
+               "Dry-run завершён. Запусти без --dry-run, чтобы применить изменения.")"
     else
-        log "Готово. После перезагрузки контейнера вся конфигурация поднимется автоматически."
+        log "$(t "Done. After container reboot everything comes up automatically." \
+               "Готово. После перезагрузки контейнера вся конфигурация поднимется автоматически.")"
     fi
 }
 
