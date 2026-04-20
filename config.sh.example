@@ -23,17 +23,30 @@
 #             (обычно 24, может быть 28 и т.п.).
 #
 # EXITS — list of WAN exits in "code:IP:fwmark" format:
-#   * code    — short exit name (wan1, wan2, ...). Matches the filenames
-#               /etc/tun2socks/<code>.yaml, xray@<code>.service,
-#               tun2socks@<code>.service, tun<code>, macvlan xray-<code>.
+#   * code    — short exit name (wan1, wan2, ...). Each <code> MUST match
+#               the names of your already-prepared per-exit resources:
+#                   xray@<code>.service        (xray instance name)
+#                   /etc/xray/<code>.json      (xray config)
+#                   /etc/tun2socks/<code>.yaml (tun2socks config)
+#               The script will also create: tun<code> (tun device) and
+#               xray-<code> (macvlan interface). If you rename an exit
+#               in EXITS, rename or create the matching files/services too
+#               — the defaults below (wan1/wan2/wan3) are placeholders.
 #   * IP      — macvlan address in the same subnet as PARENT_IF. A client
 #               sets this IP as its default gateway.
 #   * fwmark  — unique iptables mark (commonly 100+) for policy routing.
 #
 #   Список WAN-выходов в формате "код:IP:fwmark":
-#   * код     — короткое имя выхода (wan1, wan2, ...). Совпадает с именами
-#               /etc/tun2socks/<код>.yaml, xray@<код>.service,
-#               tun2socks@<код>.service, tun<код>, macvlan xray-<код>.
+#   * код     — короткое имя выхода (wan1, wan2, ...). Каждый <код>
+#               ДОЛЖЕН совпадать с именами уже подготовленных ресурсов:
+#                   xray@<код>.service         (имя инстанса xray)
+#                   /etc/xray/<код>.json       (конфиг xray)
+#                   /etc/tun2socks/<код>.yaml  (конфиг tun2socks)
+#               Скрипт также создаст: tun<код> (tun-устройство) и
+#               xray-<код> (macvlan-интерфейс). Если переименуешь выход
+#               в EXITS — переименуй или создай соответствующие файлы
+#               и сервисы. Значения по умолчанию (wan1/wan2/wan3) — просто
+#               плейсхолдеры.
 #   * IP      — адрес macvlan в той же подсети, что и PARENT_IF. Клиент
 #               указывает этот IP как default gateway.
 #   * fwmark  — уникальная метка iptables (обычно 100+) для policy routing.

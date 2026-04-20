@@ -82,6 +82,8 @@ EXITS=(
 
 Каждая запись в `EXITS` — это WAN-выход: `код` совпадает с именем `/etc/tun2socks/<код>.yaml`, `xray@<код>.service`, `tun<код>` и `xray-<код>`; `IP` — адрес macvlan, который клиент ставит как шлюз по умолчанию; `fwmark` — любое уникальное число (по соглашению 100+).
 
+> ⚠ **`wan1` / `wan2` / `wan3` — это плейсхолдеры, а не магические имена.** Каждый `<код>` должен совпадать с именами уже подготовленных ресурсов xray и tun2socks для этого выхода — т.е. `xray@<код>.service`, `/etc/xray/<код>.json` и `/etc/tun2socks/<код>.yaml`. Если твои выходы называются, скажем, `de01` и `uk01`, пиши `de01:...` / `uk01:...` в `EXITS` **и** создавай `/etc/xray/de01.json`, `/etc/tun2socks/de01.yaml`, `xray@de01.service` и т.д. под эти имена. Значения по умолчанию из `config.sh.example` сработают только если ты создашь ресурсы `wan1/wan2/wan3` именно с такими именами.
+
 ## Удаление
 
 ```bash
@@ -92,7 +94,22 @@ bash install.sh --uninstall
 
 ## Пошаговая установка
 
-### Шаг 1. Поднять три IP на `eth0` через macvlan
+### Шаг 1. Подготовить конфиги xray и tun2socks
+
+До всего остального — настрой для каждого выхода инстанс xray и конфиг tun2socks и убедись, что они реально работают. Именно отсюда берутся `<код>`-имена в `EXITS` — ты не сможешь использовать `wan1/wan2/wan3`, если не создашь инстансы именно с этими именами.
+
+Для каждого выхода `<код>` (например `wan1`):
+
+1. Напиши xray-конфиг в `/etc/xray/<код>.json` с outbound (VLESS/VMess/Trojan/и т.д.) на upstream и SOCKS inbound, слушающим на macvlan-IP этого выхода (например `192.168.0.232:10808`). Разные выходы **обязаны** слушать на разных macvlan-IP — иначе поднимется только один инстанс.
+2. Убедись, что systemd-шаблон `xray@.service` существует (ставится вместе с XTLS/Xray-install), и запусти `xray@<код>`, чтобы проверить, что SOCKS-inbound поднялся.
+3. Напиши tun2socks-конфиг в `/etc/tun2socks/<код>.yaml`:
+   - `device: tun://tun<код>` — tun-устройство, которое создаст tun2socks
+   - `proxy: socks5://<этот-macvlan-IP>:10808` — указывает на соответствующий xray
+4. Запусти `tun2socks@<код>` и проверь: `curl --interface tun<код> https://api.ipify.org` должен вернуть IP upstream-выхода.
+
+Только когда каждая пара xray+tun2socks работает сама по себе — переходи к macvlan / policy-routing ниже. `install.sh --install` и `systemctl enable --now setup-routing.service` в следующих шагах считают, что эти сервисы уже существуют и работают.
+
+### Шаг 2. Поднять три IP на `eth0` через macvlan
 
 Каждый macvlan получит свой MAC — это критично, чтобы ARP-ответы клиенту различались.
 
@@ -117,7 +134,7 @@ ip -4 addr show
 ip link show | grep ether
 ```
 
-### Шаг 2. ARP-настройки
+### Шаг 3. ARP-настройки
 
 Без этого интерфейс ответит ARP не только за свой IP, но и за чужие — MAC'и на стороне клиента совпадут, и различить шлюзы будет невозможно.
 
@@ -131,7 +148,7 @@ EOF
 sysctl -p /etc/sysctl.d/99-arp.conf
 ```
 
-### Шаг 3. Форвардинг и rp_filter
+### Шаг 4. Форвардинг и rp_filter
 
 ```bash
 cat > /etc/sysctl.d/99-forward.conf <<'EOF'
@@ -144,7 +161,7 @@ sysctl -p /etc/sysctl.d/99-forward.conf
 
 `rp_filter=0` нужен, потому что при асимметричном роутинге (пакет пришёл на `xray-wan1`, ответ выйдет через `tunwan1`) строгая проверка reverse path дропает пакеты.
 
-### Шаг 4. Таблицы маршрутизации
+### Шаг 5. Таблицы маршрутизации
 
 ```bash
 cat >> /etc/iproute2/rt_tables <<'EOF'
@@ -154,7 +171,7 @@ cat >> /etc/iproute2/rt_tables <<'EOF'
 EOF
 ```
 
-### Шаг 5. ExecStartPost для tun2socks (поднятие tun-интерфейсов)
+### Шаг 6. ExecStartPost для tun2socks (поднятие tun-интерфейсов)
 
 xjasonlyu/tun2socks создаёт tun, но не поднимает его. Добавляем drop-in:
 
@@ -167,7 +184,7 @@ EOF
 systemctl daemon-reload
 ```
 
-### Шаг 6. Скрипт поднятия macvlan + systemd-юнит
+### Шаг 7. Скрипт поднятия macvlan + systemd-юнит
 
 Чтобы macvlan поднимался при каждой загрузке:
 
@@ -209,7 +226,7 @@ systemctl daemon-reload
 systemctl enable --now setup-macvlan.service
 ```
 
-### Шаг 7. Скрипт policy routing + systemd-юнит
+### Шаг 8. Скрипт policy routing + systemd-юнит
 
 ```bash
 cat > /usr/local/sbin/setup-routing.sh <<'EOF'
@@ -280,7 +297,7 @@ systemctl daemon-reload
 systemctl enable setup-routing.service
 ```
 
-### Шаг 8. Включить xray и tun2socks сервисы
+### Шаг 9. Включить xray и tun2socks сервисы
 
 Важен порядок: xray должен стартовать **до** tun2socks, потому что tun2socks подключается к socks5 xray при запуске. Systemd с учётом `Before=`/`After=` это обеспечит, но при ручном рестарте — сначала xray, потом tun2socks.
 
@@ -289,13 +306,13 @@ systemctl enable --now xray@wan1 xray@wan2 xray@wan3
 systemctl enable --now tun2socks@wan1 tun2socks@wan2 tun2socks@wan3
 ```
 
-### Шаг 9. Запустить роутинг
+### Шаг 10. Запустить роутинг
 
 ```bash
 systemctl start setup-routing.service
 ```
 
-### Шаг 10. Проверка
+### Шаг 11. Проверка
 
 С самого контейнера (обход клиентской части):
 

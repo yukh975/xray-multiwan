@@ -82,6 +82,8 @@ EXITS=(
 
 Each `EXITS` entry is a WAN exit: `code` matches `/etc/tun2socks/<code>.yaml`, `xray@<code>.service`, `tun<code>` and `xray-<code>`; `IP` is the macvlan address the client sets as its default gateway; `fwmark` is any unique integer (convention: 100+).
 
+> ⚠ **`wan1` / `wan2` / `wan3` are placeholders, not magic names.** Each `<code>` must match the names of the xray instance and tun2socks config you actually prepared for that exit — i.e. `xray@<code>.service`, `/etc/xray/<code>.json` and `/etc/tun2socks/<code>.yaml`. If your exits are named, say, `de01` and `uk01`, put `de01:...` / `uk01:...` in `EXITS` **and** create `/etc/xray/de01.json`, `/etc/tun2socks/de01.yaml`, `xray@de01.service`, etc. to match. The defaults in `config.sh.example` only work if you also create `wan1/wan2/wan3` resources with those exact names.
+
 ## Uninstall
 
 ```bash
@@ -92,7 +94,22 @@ Removes every artifact `install.sh` creates — services, scripts, systemd units
 
 ## Step-by-step installation
 
-### Step 1. Bring up three IPs on `eth0` via macvlan
+### Step 1. Prepare xray configs and tun2socks configs
+
+Before anything else, set up each exit's xray instance and tun2socks config and confirm they actually work. This is where the `<code>` names in `EXITS` come from — you can't use `wan1/wan2/wan3` unless you create those instances with exactly those names.
+
+For each exit `<code>` (e.g. `wan1`):
+
+1. Write the xray config at `/etc/xray/<code>.json` with an outbound (VLESS/VMess/Trojan/etc.) to the upstream, and a SOCKS inbound bound to the macvlan IP of that exit (e.g. `192.168.0.232:10808`). Different exits **must** bind to different macvlan IPs — otherwise only one instance will listen.
+2. Make sure the systemd template `xray@.service` exists (it comes with XTLS/Xray-install) and start `xray@<code>` to verify the SOCKS inbound comes up.
+3. Write the tun2socks config at `/etc/tun2socks/<code>.yaml`:
+   - `device: tun://tun<code>` — the tun device tun2socks will create
+   - `proxy: socks5://<that-macvlan-IP>:10808` — points to the matching xray
+4. Start `tun2socks@<code>` and sanity-check it: `curl --interface tun<code> https://api.ipify.org` should return the upstream exit's IP.
+
+Only once each xray+tun2socks pair works on its own should you move on to the macvlan / policy-routing plumbing below. `install.sh --install` and `systemctl enable --now setup-routing.service` in later steps assume these services already exist and work.
+
+### Step 2. Bring up three IPs on `eth0` via macvlan
 
 Each macvlan gets its own MAC — this is critical so the client's ARP cache can tell the gateways apart.
 
@@ -117,7 +134,7 @@ ip -4 addr show
 ip link show | grep ether
 ```
 
-### Step 2. ARP tuning
+### Step 3. ARP tuning
 
 Without this, the interface answers ARP for any IP on the host — the client sees identical MACs for all gateways, and gateway differentiation breaks.
 
@@ -131,7 +148,7 @@ EOF
 sysctl -p /etc/sysctl.d/99-arp.conf
 ```
 
-### Step 3. Forwarding and rp_filter
+### Step 4. Forwarding and rp_filter
 
 ```bash
 cat > /etc/sysctl.d/99-forward.conf <<'EOF'
@@ -144,7 +161,7 @@ sysctl -p /etc/sysctl.d/99-forward.conf
 
 `rp_filter=0` is required because routing here is asymmetric (packet arrives on `xray-wan1`, reply goes out via `tunwan1`) — strict reverse-path filtering would drop these packets.
 
-### Step 4. Routing tables
+### Step 5. Routing tables
 
 ```bash
 cat >> /etc/iproute2/rt_tables <<'EOF'
@@ -154,7 +171,7 @@ cat >> /etc/iproute2/rt_tables <<'EOF'
 EOF
 ```
 
-### Step 5. ExecStartPost for tun2socks (bringing tun interfaces up)
+### Step 6. ExecStartPost for tun2socks (bringing tun interfaces up)
 
 xjasonlyu/tun2socks creates the tun device but doesn't bring it up. Add a drop-in:
 
@@ -167,7 +184,7 @@ EOF
 systemctl daemon-reload
 ```
 
-### Step 6. macvlan setup script + systemd unit
+### Step 7. macvlan setup script + systemd unit
 
 So macvlan interfaces come back on every boot:
 
@@ -209,7 +226,7 @@ systemctl daemon-reload
 systemctl enable --now setup-macvlan.service
 ```
 
-### Step 7. Policy-routing script + systemd unit
+### Step 8. Policy-routing script + systemd unit
 
 ```bash
 cat > /usr/local/sbin/setup-routing.sh <<'EOF'
@@ -280,7 +297,7 @@ systemctl daemon-reload
 systemctl enable setup-routing.service
 ```
 
-### Step 8. Enable xray and tun2socks services
+### Step 9. Enable xray and tun2socks services
 
 Ordering matters: xray must start **before** tun2socks, because tun2socks connects to xray's socks5 at startup. Systemd's `Before=`/`After=` handles this automatically; for manual restarts, start xray first, then tun2socks.
 
@@ -289,13 +306,13 @@ systemctl enable --now xray@wan1 xray@wan2 xray@wan3
 systemctl enable --now tun2socks@wan1 tun2socks@wan2 tun2socks@wan3
 ```
 
-### Step 9. Start routing
+### Step 10. Start routing
 
 ```bash
 systemctl start setup-routing.service
 ```
 
-### Step 10. Verify
+### Step 11. Verify
 
 From inside the container (bypassing the client path):
 
