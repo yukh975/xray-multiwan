@@ -73,14 +73,14 @@ All tunables live in `config.sh`, sourced by `install.sh`, `diag.sh` and `migrat
 PARENT_IF="eth0"                      # parent interface (e.g. eth0)
 NETMASK_BITS="24"                       # subnet prefix length
 
-COUNTRIES=(
+EXITS=(
     "wan1:192.168.0.232:100"              # code:IP:fwmark
     "wan2:192.168.0.233:101"
     "wan3:192.168.0.234:102"
 )
 ```
 
-Each `COUNTRIES` entry is a WAN exit: `code` matches `/etc/tun2socks/<code>.yaml`, `xray@<code>.service`, `tun<code>` and `xray-<code>`; `IP` is the macvlan address the client sets as its default gateway; `fwmark` is any unique integer (convention: 100+).
+Each `EXITS` entry is a WAN exit: `code` matches `/etc/tun2socks/<code>.yaml`, `xray@<code>.service`, `tun<code>` and `xray-<code>`; `IP` is the macvlan address the client sets as its default gateway; `fwmark` is any unique integer (convention: 100+).
 
 ## Uninstall
 
@@ -421,7 +421,7 @@ bash install.sh --install --dry-run
 
 In dry-run mode the script prints every command it would execute and every file it would create, without making any real changes. Preconditions (interface presence, tun2socks, configs, xray units) are still checked — dry-run only makes sense on an already-prepared system.
 
-To change the exit list, edit the `COUNTRIES` array in [`config.sh`](config.sh) and re-run `install.sh` — it's idempotent and will reconfigure everything (including mangle rules), but only for artifacts it manages (scripts, units, and mangle rules are fully regenerated). The array name stayed `COUNTRIES` for historical reasons; conceptually these entries are WAN exits.
+To change the exit list, edit the `EXITS` array in [`config.sh`](config.sh) and re-run `install.sh` — it's idempotent and will reconfigure everything (including mangle rules), but only for artifacts it manages (scripts, units, and mangle rules are fully regenerated).
 
 **What does NOT get cleaned up automatically when shrinking the exit list:**
 
@@ -445,7 +445,7 @@ To add a fourth exit (code `wan4`, IP `.235`, tun `tunwan4`, xray socks5 on `.23
 6. In `setup-routing.service` add `tun2socks@wan4.service xray@wan4.service` to `After=`.
 7. Enable and start: `systemctl enable --now xray@wan4 tun2socks@wan4`, then `systemctl restart setup-routing.service`.
 
-Or — simpler — add the new entry to the `COUNTRIES` array in [`config.sh`](config.sh) and re-run `install.sh`. It's idempotent and will reconfigure everything including the new exit.
+Or — simpler — add the new entry to the `EXITS` array in [`config.sh`](config.sh) and re-run `install.sh`. It's idempotent and will reconfigure everything including the new exit.
 
 ## Migration to a new address plan
 
@@ -475,7 +475,7 @@ If `eth0` isn't on the expected subnet yet, the script stops with the exact `pct
 
 ### What it does (in order)
 
-1. **Checks** — `eth0` is on the subnet of the first `COUNTRIES` entry (coarse /24 prefix match); `install.sh`, `diag.sh`, `config.sh` exist at the expected paths (`/root/files/` by default, override via `INSTALL_SH=` / `DIAG_SH=` / `CONFIG_SH=`).
+1. **Checks** — `eth0` is on the subnet of the first `EXITS` entry (coarse /24 prefix match); `install.sh`, `diag.sh`, `config.sh` exist at the expected paths (`/root/files/` by default, override via `INSTALL_SH=` / `DIAG_SH=` / `CONFIG_SH=`).
 2. **Backup** — `/etc/xray/<code>.json`, `/etc/tun2socks/<code>.yaml`, `install.sh`, `diag.sh` are copied to `/root/migrate-backup-<YYYYMMDD-HHMMSS>/`.
 3. **xray configs** — rewrites the `"listen"` field in each `/etc/xray/<code>.json` to the new per-exit IP from `config.sh`.
 4. **tun2socks configs** — rewrites `proxy: socks5://<old-ip>:10808` to the new IP in each `/etc/tun2socks/<code>.yaml`.
@@ -488,7 +488,7 @@ If `eth0` isn't on the expected subnet yet, the script stops with the exact `pct
 
 - Does **not** change the IP on `eth0` itself (you do that on the PVE host).
 - Does **not** clean up stale routing-table entries in `/etc/iproute2/rt_tables` (they're harmless, keyed by fwmark).
-- Does **not** remove old macvlan interfaces whose codes no longer exist in `COUNTRIES` — only IPs are stripped.
+- Does **not** remove old macvlan interfaces whose codes no longer exist in `EXITS` — only IPs are stripped.
 
 ### Dry run
 

@@ -2,7 +2,7 @@
 #
 # migrate.sh — migrate the multi-WAN gateway to a new address plan.
 #
-# The new plan is taken from config.sh (PARENT_IF, NETMASK_BITS, COUNTRIES).
+# The new plan is taken from config.sh (PARENT_IF, NETMASK_BITS, EXITS).
 # Edit config.sh *before* running this script — migrate.sh itself has no
 # tunables, it reads everything from the config.
 #
@@ -28,7 +28,7 @@
 set -uo pipefail
 
 # ---- unified config ----
-# Target values (PARENT_IF, NETMASK_BITS, COUNTRIES) come from config.sh,
+# Target values (PARENT_IF, NETMASK_BITS, EXITS) come from config.sh,
 # the same file install.sh and diag.sh read. Edit config.sh only.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -69,7 +69,7 @@ while [ $# -gt 0 ]; do
 Использование: migrate.sh [опции]
 
 Переводит multi-WAN gateway на новую адресацию.
-Целевые значения (PARENT_IF, NETMASK_BITS, COUNTRIES) берутся из config.sh
+Целевые значения (PARENT_IF, NETMASK_BITS, EXITS) берутся из config.sh
 — отредактируй config.sh перед запуском. В самом скрипте ничего править
 не нужно.
 
@@ -87,7 +87,7 @@ HELP
 Usage: migrate.sh [options]
 
 Migrates the multi-WAN gateway to a new address plan.
-Target values (PARENT_IF, NETMASK_BITS, COUNTRIES) are read from config.sh
+Target values (PARENT_IF, NETMASK_BITS, EXITS) are read from config.sh
 — edit config.sh before running. Nothing in this script needs editing.
 
 Options:
@@ -142,18 +142,18 @@ check_parent_ip() {
 
     info "$PARENT_IF = $current"
 
-    # Sanity check: the parent IP prefix should match one of the new COUNTRIES IPs'
+    # Sanity check: the parent IP prefix should match one of the new EXITS IPs'
     # first three octets (same subnet, coarse /24 check — works for /24 and /28 alike).
     local parent_ip="${current%%/*}"
     local parent_prefix="${parent_ip%.*}"
-    local first_item="${COUNTRIES[0]}"
+    local first_item="${EXITS[0]}"
     local first_rest="${first_item#*:}"
     local first_ip="${first_rest%%:*}"
     local target_prefix="${first_ip%.*}"
 
     if [ "$parent_prefix" != "$target_prefix" ]; then
         echo
-        echo "$(t "Parent IP $parent_ip is not in the same /24 as the new COUNTRIES IPs (expected prefix $target_prefix.*)." "IP родителя $parent_ip не в одной /24 с новыми COUNTRIES (ожидается префикс $target_prefix.*).")"
+        echo "$(t "Parent IP $parent_ip is not in the same /24 as the new EXITS IPs (expected prefix $target_prefix.*)." "IP родителя $parent_ip не в одной /24 с новыми EXITS (ожидается префикс $target_prefix.*).")"
         echo "$(t "Reconfigure the container on the PVE host and reboot it:" "Обнови конфиг контейнера на хосте PVE и перезагрузи его:")"
         echo "  pct set <VMID> -net0 name=eth0,bridge=<...>,ip=<$(t "new-ip" "новый-IP")>/${NETMASK_BITS},gw=<$(t "new-gw" "новый-gw")>"
         exit 1
@@ -166,7 +166,7 @@ make_backup() {
     log "$(t "Backing up configs to $BACKUP_DIR" "Бэкап конфигов в $BACKUP_DIR")"
     run mkdir -p "$BACKUP_DIR"
 
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local xray_cfg="${XRAY_CONFDIR}/${code}.json"
         local tun_cfg="${TUN2SOCKS_CONFDIR}/${code}.yaml"
@@ -181,7 +181,7 @@ make_backup() {
 update_xray_configs() {
     log "$(t "Updating IPs in xray configs" "Обновляю IP в xray-конфигах")"
 
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local rest="${item#*:}"
         local new_ip="${rest%%:*}"
@@ -215,7 +215,7 @@ update_xray_configs() {
 update_tun2socks_configs() {
     log "$(t "Updating IPs in tun2socks configs" "Обновляю IP в tun2socks-конфигах")"
 
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local rest="${item#*:}"
         local new_ip="${rest%%:*}"
@@ -249,7 +249,7 @@ update_tun2socks_configs() {
 cleanup_old_ips() {
     log "$(t "Stripping old IPs from macvlan interfaces" "Снимаю старые IP с macvlan-интерфейсов")"
 
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local rest="${item#*:}"
         local want_ip="${rest%%:*}"
@@ -272,7 +272,7 @@ cleanup_old_ips() {
 
 restart_xray() {
     log "$(t "Restarting xray@* with new configs" "Перезапускаю xray@* с новыми конфигами")"
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         run systemctl restart "xray@${code}.service"
     done

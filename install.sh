@@ -20,7 +20,7 @@
 set -uo pipefail
 
 # ---- unified config ----
-# All tunables (PARENT_IF, NETMASK_BITS, COUNTRIES) live in config.sh next
+# All tunables (PARENT_IF, NETMASK_BITS, EXITS) live in config.sh next
 # to this script. Edit config.sh, not this file.
 # To use a different config file: CONFIG_SH=/path/config.sh bash install.sh
 
@@ -70,7 +70,7 @@ print_help() {
                    Комбинируется с --install или --uninstall.
   -h, --help       Эта справка.
 
-Настройки (PARENT_IF, NETMASK_BITS, COUNTRIES) — в файле config.sh
+Настройки (PARENT_IF, NETMASK_BITS, EXITS) — в файле config.sh
 рядом со скриптом. Отредактируй его перед первым запуском.
 
 Примеры:
@@ -95,7 +95,7 @@ Options:
                    Combine with --install or --uninstall.
   -h, --help       This help.
 
-Tunables (PARENT_IF, NETMASK_BITS, COUNTRIES) live in config.sh next to
+Tunables (PARENT_IF, NETMASK_BITS, EXITS) live in config.sh next to
 this script. Edit it before the first run.
 
 Examples:
@@ -251,7 +251,7 @@ require_xray() {
   bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 
 После установки положи per-exit конфиги в ${XRAY_CONFDIR}/<code>.json
-(по одному на каждый WAN-выход из COUNTRIES).
+(по одному на каждый WAN-выход из EXITS).
 EOF
         else
             cat >&2 <<'EOF'
@@ -261,7 +261,7 @@ How to install (XTLS/Xray-core, official script):
   bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 
 Then put per-exit configs at ${XRAY_CONFDIR}/<code>.json
-(one per WAN exit in COUNTRIES).
+(one per WAN exit in EXITS).
 EOF
         fi
         exit 1
@@ -269,7 +269,7 @@ EOF
 }
 
 require_configs() {
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         [ -f "${TUN2SOCKS_CONFDIR}/${code}.yaml" ] || \
             die "$(t "Missing ${TUN2SOCKS_CONFDIR}/${code}.yaml for exit '${code}'" \
@@ -312,7 +312,7 @@ EOF
 write_rt_tables() {
     log "$(t "Adding routing tables to /etc/iproute2/rt_tables" \
            "Добавляю таблицы маршрутизации в /etc/iproute2/rt_tables")"
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local mark="${item##*:}"
         local tbl="via_${code}"
@@ -347,7 +347,7 @@ write_macvlan_script() {
            "Создаю /usr/local/sbin/setup-macvlan.sh")"
 
     local pairs=""
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local rest="${item#*:}"
         local ip="${rest%%:*}"
@@ -375,7 +375,7 @@ write_macvlan_unit() {
     log "$(t "Writing setup-macvlan.service" "Создаю setup-macvlan.service")"
 
     local before_list=""
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         before_list+=" tun2socks@${code}.service xray@${code}.service"
     done
@@ -407,7 +407,7 @@ write_routing_script() {
     local ip_rules=""
     local mangle_rules=""
 
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local rest="${item#*:}"
         local ip="${rest%%:*}"
@@ -467,7 +467,7 @@ write_routing_unit() {
     log "$(t "Writing setup-routing.service" "Создаю setup-routing.service")"
 
     local after_list="setup-macvlan.service iptables.service"
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         after_list+=" tun2socks@${code}.service xray@${code}.service"
     done
@@ -496,7 +496,7 @@ enable_services() {
     run systemctl enable setup-macvlan.service
     run systemctl enable setup-routing.service
 
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         run systemctl enable "tun2socks@${code}.service"
         run systemctl enable "xray@${code}.service"
@@ -509,12 +509,12 @@ start_services() {
 
     # xray listens on socks5 bound to macvlan addresses — start after
     # macvlan, but before tun2socks (which connects to xray).
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         run systemctl restart "xray@${code}.service"
     done
 
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         run systemctl restart "tun2socks@${code}.service"
     done
@@ -548,7 +548,7 @@ verify() {
     echo
     log "$(t "Connectivity check (curl per tun):" \
            "Проверка связности (curl через каждый tun):")"
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local tun="tun${code}"
         printf "  %s: " "$tun"
@@ -567,7 +567,7 @@ uninstall_all() {
            "Удаляю multi-WAN gateway")"
 
     # 1. Stop and disable per-instance services.
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         run systemctl stop    "tun2socks@${code}.service" 2>/dev/null || true
         run systemctl disable "tun2socks@${code}.service" 2>/dev/null || true
@@ -584,7 +584,7 @@ uninstall_all() {
     # 3. Clean iptables.
     log "$(t "Clearing iptables rules" "Чищу правила iptables")"
     run iptables -t mangle -F PREROUTING 2>/dev/null || true
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         # Drop the NAT rule if present (loop in case it was added more than once).
         while iptables -t nat -C POSTROUTING -o "tun${code}" -j MASQUERADE 2>/dev/null; do
@@ -596,7 +596,7 @@ uninstall_all() {
     # 4. Remove ip rules.
     log "$(t "Removing ip rules and routing tables" \
            "Удаляю ip rule и таблицы маршрутов")"
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local mark="${item##*:}"
         local tbl="via_${code}"
@@ -610,7 +610,7 @@ uninstall_all() {
 
     # 5. Remove macvlan interfaces.
     log "$(t "Removing macvlan interfaces" "Удаляю macvlan-интерфейсы")"
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         if ip link show "xray-${code}" &>/dev/null; then
             run ip link del "xray-${code}" 2>/dev/null || true
@@ -634,7 +634,7 @@ uninstall_all() {
     # 7. Remove entries from /etc/iproute2/rt_tables.
     log "$(t "Cleaning /etc/iproute2/rt_tables" \
            "Чищу /etc/iproute2/rt_tables")"
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local mark="${item##*:}"
         local tbl="via_${code}"

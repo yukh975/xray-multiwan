@@ -22,7 +22,7 @@
 #             Длина маски подсети, в которой живут PARENT_IF и macvlan-IP
 #             (обычно 24, может быть 28 и т.п.).
 #
-# COUNTRIES — list of WAN exits in "code:IP:fwmark" format:
+# EXITS — list of WAN exits in "code:IP:fwmark" format:
 #   * code    — short exit name (wan1, wan2, ...). Matches the filenames
 #               /etc/tun2socks/<code>.yaml, xray@<code>.service,
 #               tun2socks@<code>.service, tun<code>, macvlan xray-<code>.
@@ -38,15 +38,13 @@
 #               указывает этот IP как default gateway.
 #   * fwmark  — уникальная метка iptables (обычно 100+) для policy routing.
 #
-#   The variable name COUNTRIES is historical; conceptually these are WAN
-#   exits / xray instances.
-#   Имя переменной COUNTRIES осталось исторически; концептуально это список
-#   WAN-выходов / xray-инстансов.
+#   Each exit is an arbitrary xray outbound — not tied to a country.
+#   Каждый выход — это произвольный xray outbound, не обязательно страна.
 #
 PARENT_IF="eth0"
 NETMASK_BITS="24"
 
-COUNTRIES=(
+EXITS=(
     "wan1:192.168.0.232:100"
     "wan2:192.168.0.233:101"
     "wan3:192.168.0.234:102"

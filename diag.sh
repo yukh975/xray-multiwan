@@ -135,7 +135,7 @@ check_sysctl() {
 check_rt_tables() {
     section "$(t "routing tables (/etc/iproute2/rt_tables)" "таблицы маршрутизации (/etc/iproute2/rt_tables)")"
 
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local mark="${item##*:}"
         local tbl="via_${code}"
@@ -175,7 +175,7 @@ check_systemd_units() {
         fail "$(t "missing /etc/systemd/system/tun2socks@.service.d/link-up.conf — tun interfaces will not come up" "нет /etc/systemd/system/tun2socks@.service.d/link-up.conf — tun-интерфейсы не поднимутся")"
     fi
 
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         for svc in "xray@${code}.service" "tun2socks@${code}.service"; do
             if systemctl is-enabled "$svc" >/dev/null 2>&1; then
@@ -214,7 +214,7 @@ check_interfaces() {
         return
     fi
 
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local rest="${item#*:}"
         local ip="${rest%%:*}"
@@ -261,7 +261,7 @@ check_interfaces() {
         fi
     done
 
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local tun="tun${code}"
 
@@ -289,7 +289,7 @@ check_interfaces() {
 check_ip_rules() {
     section "ip rule (policy routing)"
 
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local mark="${item##*:}"
         local tbl="via_${code}"
@@ -305,7 +305,7 @@ check_ip_rules() {
 check_routes() {
     section "$(t "route tables (via_*)" "таблицы маршрутов (via_*)")"
 
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local tbl="via_${code}"
         local tun="tun${code}"
@@ -327,7 +327,7 @@ check_routes() {
 check_iptables() {
     section "iptables mangle"
 
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local mark="${item##*:}"
         local iface="xray-${code}"
@@ -344,7 +344,7 @@ check_iptables() {
 
     section "iptables NAT POSTROUTING"
 
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local tun="tun${code}"
 
@@ -366,7 +366,7 @@ check_tunnels() {
     fi
 
     local ips=()
-    for item in "${COUNTRIES[@]}"; do
+    for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
         local tun="tun${code}"
         local out
