@@ -41,6 +41,11 @@ fi
 # shellcheck source=config.sh disable=SC1091
 . "$CONFIG_SH"
 
+# Backwards compat: old config.sh used COUNTRIES=, new one uses EXITS=.
+if declare -p COUNTRIES >/dev/null 2>&1 && ! declare -p EXITS >/dev/null 2>&1; then
+    EXITS=("${COUNTRIES[@]}")
+fi
+
 INSTALL_SH="${INSTALL_SH:-$SCRIPT_DIR/install.sh}"
 DIAG_SH="${DIAG_SH:-$SCRIPT_DIR/diag.sh}"
 
