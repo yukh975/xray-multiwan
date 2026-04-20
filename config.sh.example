@@ -45,3 +45,9 @@ COUNTRIES=(
     "wan2:192.168.0.233:101"
     "wan3:192.168.0.234:102"
 )
+
+# XRAY_CONFDIR / TUN2SOCKS_CONFDIR — каталоги с конфигами соответствующих
+#   сервисов. Обычно не требуют правки.
+#   Directories for the respective service configs. Usually no need to change.
+XRAY_CONFDIR="/etc/xray"
+TUN2SOCKS_CONFDIR="/etc/tun2socks"

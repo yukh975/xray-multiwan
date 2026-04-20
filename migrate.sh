@@ -44,8 +44,8 @@ fi
 INSTALL_SH="${INSTALL_SH:-$SCRIPT_DIR/install.sh}"
 DIAG_SH="${DIAG_SH:-$SCRIPT_DIR/diag.sh}"
 
-XRAY_CONFDIR="/etc/xray"
-TUN2SOCKS_CONFDIR="/etc/tun2socks"
+XRAY_CONFDIR="${XRAY_CONFDIR:-/etc/xray}"
+TUN2SOCKS_CONFDIR="${TUN2SOCKS_CONFDIR:-/etc/tun2socks}"
 
 # ---- i18n ----
 case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in

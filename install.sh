@@ -34,6 +34,9 @@ fi
 # shellcheck source=config.sh disable=SC1091
 . "$CONFIG_SH"
 
+XRAY_CONFDIR="${XRAY_CONFDIR:-/etc/xray}"
+TUN2SOCKS_CONFDIR="${TUN2SOCKS_CONFDIR:-/etc/tun2socks}"
+
 # ---- i18n ----
 case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in
     ru*|RU*) LANG_CODE=ru ;;
@@ -208,9 +211,9 @@ require_tun2socks() {
 require_configs() {
     for item in "${COUNTRIES[@]}"; do
         local code="${item%%:*}"
-        [ -f "/etc/tun2socks/${code}.yaml" ] || \
-            die "$(t "Missing /etc/tun2socks/${code}.yaml for exit '${code}'" \
-                   "Нет /etc/tun2socks/${code}.yaml для выхода '${code}'")"
+        [ -f "${TUN2SOCKS_CONFDIR}/${code}.yaml" ] || \
+            die "$(t "Missing ${TUN2SOCKS_CONFDIR}/${code}.yaml for exit '${code}'" \
+                   "Нет ${TUN2SOCKS_CONFDIR}/${code}.yaml для выхода '${code}'")"
     done
 }
 
@@ -590,8 +593,8 @@ uninstall_all() {
     run systemctl daemon-reload
 
     echo
-    log "$(t "Uninstall done. User configs kept: /etc/xray/*.json, /etc/tun2socks/*.yaml, xray/tun2socks binaries." \
-           "Удаление завершено. Сохранены: /etc/xray/*.json, /etc/tun2socks/*.yaml, бинарники xray/tun2socks.")"
+    log "$(t "Uninstall done. User configs kept: ${XRAY_CONFDIR}/*.json, ${TUN2SOCKS_CONFDIR}/*.yaml, xray/tun2socks binaries." \
+           "Удаление завершено. Сохранены: ${XRAY_CONFDIR}/*.json, ${TUN2SOCKS_CONFDIR}/*.yaml, бинарники xray/tun2socks.")"
 }
 
 # ---- main ----
