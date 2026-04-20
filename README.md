@@ -1,85 +1,94 @@
-# Multi-country gateway на одном контейнере
+**🇬🇧 English** | [🇷🇺 Русский](README_RU.md)
 
-Контейнер Proxmox с несколькими xray+tun2socks (по одной связке на страну). Клиент выбирает страну, указывая разные IP в качестве шлюза: `.232` → Франция, `.233` → Швеция, `.234` → Финляндия.
+# Multi-country gateway in a single container
 
-## Архитектура
+[![Shell](https://img.shields.io/badge/shell-bash-121011?logo=gnu-bash&logoColor=white)](#)
+[![Linux](https://img.shields.io/badge/Linux-Debian%20%7C%20ALT-FCC624?logo=linux&logoColor=black)](#)
+[![Proxmox](https://img.shields.io/badge/Proxmox-LXC-E57000?logo=proxmox&logoColor=white)](https://www.proxmox.com/)
+[![Xray](https://img.shields.io/badge/xray--core-VLESS-blue)](https://github.com/XTLS/Xray-core)
+[![tun2socks](https://img.shields.io/badge/tun2socks-xjasonlyu-green)](https://github.com/xjasonlyu/tun2socks)
+[![Idempotent](https://img.shields.io/badge/install-idempotent-success)](#re-running-installsh-on-a-live-system)
+
+A Proxmox container running multiple xray+tun2socks stacks (one per country). The client selects a country by pointing its default gateway at a different IP: `.232` → France, `.233` → Sweden, `.234` → Finland.
+
+## Architecture
 
 ```
-Клиент (172.31.255.245)
+Client (192.168.0.245)
   │
-  │ gateway = 172.31.255.232 (или .233, .234)
+  │ gateway = 192.168.0.232 (or .233, .234)
   ↓
 ┌─────────────────────────────────────────────────┐
-│ Контейнер (ALT Linux / Debian)                  │
+│ Container (ALT Linux / Debian)                  │
 │                                                 │
-│ global (172.31.255.230) ─ physical veth         │
-│   ├─ xray-fr (172.31.255.232) ─ macvlan         │
+│ global (192.168.0.230) ─ physical veth          │
+│   ├─ xray-fr (192.168.0.232) ─ macvlan          │
 │   │     └→ xray@fr socks5 :10808 ─→ tunfr ─→ FR │
-│   ├─ xray-se (172.31.255.233) ─ macvlan         │
+│   ├─ xray-se (192.168.0.233) ─ macvlan          │
 │   │     └→ xray@se socks5 :10808 ─→ tunse ─→ SE │
-│   └─ xray-fi (172.31.255.234) ─ macvlan         │
+│   └─ xray-fi (192.168.0.234) ─ macvlan          │
 │         └→ xray@fi socks5 :10808 ─→ tunfi ─→ FI │
 └─────────────────────────────────────────────────┘
 ```
 
-**Как работает различение шлюзов:**
+**How gateway differentiation works:**
 
-1. На `global` создаются три macvlan-подинтерфейса с отдельными MAC'ами — каждому свой IP.
-2. Клиент, указав шлюз `.232`, через ARP получает MAC `xray-fr` — и кадры летят именно на этот интерфейс.
-3. `iptables -t mangle` по `-i xray-fr` ставит fwmark 100.
-4. `ip rule fwmark 100` отправляет пакет в таблицу `via_fr`.
-5. В таблице — default через `tunfr`.
-6. tun2socks забирает пакет, передаёт в xray socks5, xray через VLESS выпускает в интернет во Франции.
-7. На выходе из tun — `MASQUERADE`, чтобы внешняя сторона видела source IP контейнера, а не клиента.
+1. Three macvlan sub-interfaces are created on top of `global`, each with its own MAC and IP.
+2. When the client sets `.232` as its gateway, ARP resolves that IP to the `xray-fr` MAC — and frames arrive at that specific interface.
+3. `iptables -t mangle` matches `-i xray-fr` and stamps `fwmark 100` on the packet.
+4. `ip rule fwmark 100` routes the packet through table `via_fr`.
+5. That table's default route goes through `tunfr`.
+6. tun2socks picks up the packet, forwards it to the local xray socks5, and xray tunnels it out via VLESS to France.
+7. On the tun output side, `MASQUERADE` rewrites the source IP so the remote endpoint sees the container, not the client.
 
-## Предварительные требования
+## Prerequisites
 
-1. **Контейнер Proxmox** с одним интерфейсом (`global`), привилегированный (нужен для macvlan и TUN).
-2. **Проброс TUN** на хосте PVE — в `/etc/pve/lxc/<VMID>.conf`:
+1. **Proxmox container** with a single interface (`global`), privileged (required for macvlan and TUN).
+2. **TUN passthrough** on the PVE host — in `/etc/pve/lxc/<VMID>.conf`:
    ```
    lxc.cgroup2.devices.allow: c 10:200 rwm
    lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
    ```
-3. **xray** установлен и оформлен как systemd-шаблон `xray@.service`, по одному инстансу на страну:
-   - `xray@fr` слушает socks5 на `172.31.255.232:10808`
-   - `xray@se` слушает socks5 на `172.31.255.233:10808`
-   - `xray@fi` слушает socks5 на `172.31.255.234:10808`
-4. **tun2socks** (xjasonlyu/tun2socks) установлен как `/usr/bin/tun2socks`, есть systemd-шаблон `/usr/lib/systemd/system/tun2socks@.service`.
-5. **Конфиги tun2socks** в `/etc/tun2socks/<n>.yaml`, где `<n>` = `fr`, `se`, `fi`. Обязательные поля:
-   - `device: tun://tun<n>` (tun2socks сам создаст tun-устройство с этим именем)
-   - `proxy: socks5://172.31.255.<IP>:10808` — указывает на свой xray
-6. **iptables-service** (обычный sysvinit-init) с файлом `/etc/sysconfig/iptables`. На ALT он ставится из коробки, на Debian может потребоваться `iptables-persistent`.
+3. **xray** installed as a systemd template `xray@.service`, one instance per country:
+   - `xray@fr` listens on socks5 at `192.168.0.232:10808`
+   - `xray@se` listens on socks5 at `192.168.0.233:10808`
+   - `xray@fi` listens on socks5 at `192.168.0.234:10808`
+4. **tun2socks** (xjasonlyu/tun2socks) installed at `/usr/bin/tun2socks`, with a systemd template `/usr/lib/systemd/system/tun2socks@.service`.
+5. **tun2socks configs** in `/etc/tun2socks/<n>.yaml`, where `<n>` = `fr`, `se`, `fi`. Required fields:
+   - `device: tun://tun<n>` (tun2socks will create the tun device with that name)
+   - `proxy: socks5://192.168.0.<IP>:10808` — points to the matching xray instance
+6. **iptables-service** (classic sysvinit-style) with `/etc/sysconfig/iptables`. Ships with ALT Linux by default; on Debian you may need `iptables-persistent`.
 
-## Пошаговая установка
+## Step-by-step installation
 
-### Шаг 1. Поднять три IP на `global` через macvlan
+### Step 1. Bring up three IPs on `global` via macvlan
 
-Каждый macvlan получит свой MAC — это критично, чтобы ARP-ответы клиенту различались.
+Each macvlan gets its own MAC — this is critical so the client's ARP cache can tell the gateways apart.
 
 ```bash
-# Создать macvlan-подинтерфейсы:
+# Create macvlan sub-interfaces:
 ip link add link global name xray-fr type macvlan mode bridge
 ip link add link global name xray-se type macvlan mode bridge
 ip link add link global name xray-fi type macvlan mode bridge
 
-# Назначить IP:
-ip addr add 172.31.255.232/24 dev xray-fr
-ip addr add 172.31.255.233/24 dev xray-se
-ip addr add 172.31.255.234/24 dev xray-fi
+# Assign IPs:
+ip addr add 192.168.0.232/24 dev xray-fr
+ip addr add 192.168.0.233/24 dev xray-se
+ip addr add 192.168.0.234/24 dev xray-fi
 
-# Поднять линки:
+# Bring links up:
 ip link set xray-fr up
 ip link set xray-se up
 ip link set xray-fi up
 
-# Проверка:
+# Verify:
 ip -4 addr show
 ip link show | grep ether
 ```
 
-### Шаг 2. ARP-настройки
+### Step 2. ARP tuning
 
-Без этого интерфейс ответит ARP не только за свой IP, но и за чужие — MAC'и на стороне клиента совпадут, и различить шлюзы будет невозможно.
+Without this, the interface answers ARP for any IP on the host — the client sees identical MACs for all gateways, and gateway differentiation breaks.
 
 ```bash
 cat > /etc/sysctl.d/99-arp.conf <<'EOF'
@@ -91,7 +100,7 @@ EOF
 sysctl -p /etc/sysctl.d/99-arp.conf
 ```
 
-### Шаг 3. Форвардинг и rp_filter
+### Step 3. Forwarding and rp_filter
 
 ```bash
 cat > /etc/sysctl.d/99-forward.conf <<'EOF'
@@ -102,9 +111,9 @@ EOF
 sysctl -p /etc/sysctl.d/99-forward.conf
 ```
 
-`rp_filter=0` нужен, потому что при асимметричном роутинге (пакет пришёл на `xray-fr`, ответ выйдет через `tunfr`) строгая проверка reverse path дропает пакеты.
+`rp_filter=0` is required because routing here is asymmetric (packet arrives on `xray-fr`, reply goes out via `tunfr`) — strict reverse-path filtering would drop these packets.
 
-### Шаг 4. Таблицы маршрутизации
+### Step 4. Routing tables
 
 ```bash
 cat >> /etc/iproute2/rt_tables <<'EOF'
@@ -114,9 +123,9 @@ cat >> /etc/iproute2/rt_tables <<'EOF'
 EOF
 ```
 
-### Шаг 5. ExecStartPost для tun2socks (поднятие tun-интерфейсов)
+### Step 5. ExecStartPost for tun2socks (bringing tun interfaces up)
 
-xjasonlyu/tun2socks создаёт tun, но не поднимает его. Добавляем drop-in:
+xjasonlyu/tun2socks creates the tun device but doesn't bring it up. Add a drop-in:
 
 ```bash
 mkdir -p /etc/systemd/system/tun2socks@.service.d
@@ -127,9 +136,9 @@ EOF
 systemctl daemon-reload
 ```
 
-### Шаг 6. Скрипт поднятия macvlan + systemd-юнит
+### Step 6. macvlan setup script + systemd unit
 
-Чтобы macvlan поднимался при каждой загрузке:
+So macvlan interfaces come back on every boot:
 
 ```bash
 cat > /usr/local/sbin/setup-macvlan.sh <<'EOF'
@@ -144,9 +153,9 @@ setup_iface() {
     fi
     ip link set "$name" up
 }
-setup_iface xray-fr 172.31.255.232
-setup_iface xray-se 172.31.255.233
-setup_iface xray-fi 172.31.255.234
+setup_iface xray-fr 192.168.0.232
+setup_iface xray-se 192.168.0.233
+setup_iface xray-fi 192.168.0.234
 EOF
 chmod +x /usr/local/sbin/setup-macvlan.sh
 
@@ -169,12 +178,12 @@ systemctl daemon-reload
 systemctl enable --now setup-macvlan.service
 ```
 
-### Шаг 7. Скрипт policy routing + systemd-юнит
+### Step 7. Policy-routing script + systemd unit
 
 ```bash
 cat > /usr/local/sbin/setup-routing.sh <<'EOF'
 #!/bin/bash
-# Ждём tun-интерфейсы (до 30 сек)
+# Wait for tun interfaces (up to 30s)
 for t in tunfr tunse tunfi; do
     for i in $(seq 1 30); do
         ip link show "$t" &>/dev/null && break
@@ -182,12 +191,12 @@ for t in tunfr tunse tunfi; do
     done
 done
 
-# Default-маршруты в таблицах
+# Default routes in each table
 ip route replace default dev tunfr table via_fr
 ip route replace default dev tunse table via_se
 ip route replace default dev tunfi table via_fi
 
-# ip rule: fwmark → таблица (с предварительным удалением, чтобы не плодить дубли)
+# ip rule: fwmark → table (delete first to avoid duplicates)
 for mark_table in "100:via_fr" "101:via_se" "102:via_fi"; do
     mark="${mark_table%%:*}"
     table="${mark_table##*:}"
@@ -195,26 +204,26 @@ for mark_table in "100:via_fr" "101:via_se" "102:via_fi"; do
     ip rule add fwmark "$mark" table "$table"
 done
 
-# Маркировка по входному интерфейсу
+# Mark packets by input interface
 iptables -t mangle -F PREROUTING
 iptables -t mangle -A PREROUTING -i xray-fr -j MARK --set-mark 100
 iptables -t mangle -A PREROUTING -i xray-se -j MARK --set-mark 101
 iptables -t mangle -A PREROUTING -i xray-fi -j MARK --set-mark 102
 
-# NAT на выходе
+# Egress NAT
 for t in tunfr tunse tunfi; do
     iptables -t nat -C POSTROUTING -o "$t" -j MASQUERADE 2>/dev/null || \
         iptables -t nat -A POSTROUTING -o "$t" -j MASQUERADE
 done
 
-# rp_filter=0 для всех задействованных интерфейсов
+# rp_filter=0 on every involved interface
 for i in xray-fr xray-se xray-fi tunfr tunse tunfi global; do
     sysctl -w net.ipv4.conf.$i.rp_filter=0 >/dev/null 2>&1 || true
 done
 
 ip route flush cache
 
-# Сохранить iptables для persistence (на ALT/RHEL-совместимых)
+# Persist iptables (on ALT / RHEL-like distros)
 if [ -d /etc/sysconfig ]; then
     iptables-save > /etc/sysconfig/iptables
 fi
@@ -240,24 +249,24 @@ systemctl daemon-reload
 systemctl enable setup-routing.service
 ```
 
-### Шаг 8. Включить xray и tun2socks сервисы
+### Step 8. Enable xray and tun2socks services
 
-Важен порядок: xray должен стартовать **до** tun2socks, потому что tun2socks подключается к socks5 xray при запуске. Systemd с учётом `Before=`/`After=` это обеспечит, но при ручном рестарте — сначала xray, потом tun2socks.
+Ordering matters: xray must start **before** tun2socks, because tun2socks connects to xray's socks5 at startup. Systemd's `Before=`/`After=` handles this automatically; for manual restarts, start xray first, then tun2socks.
 
 ```bash
 systemctl enable --now xray@fr xray@se xray@fi
 systemctl enable --now tun2socks@fr tun2socks@se tun2socks@fi
 ```
 
-### Шаг 9. Запустить роутинг
+### Step 9. Start routing
 
 ```bash
 systemctl start setup-routing.service
 ```
 
-### Шаг 10. Проверка
+### Step 10. Verify
 
-С самого контейнера (обход клиентской части):
+From inside the container (bypassing the client path):
 
 ```bash
 curl --interface tunfr -s -m 10 https://api.ipify.org; echo
@@ -265,146 +274,143 @@ curl --interface tunse -s -m 10 https://api.ipify.org; echo
 curl --interface tunfi -s -m 10 https://api.ipify.org; echo
 ```
 
-Должны вернуться три **разных** IP — exit-nodes соответствующих стран.
+You should see three **different** IPs — the exit nodes for each country.
 
-С клиента (Windows):
+From a Windows client:
 
 ```cmd
 route delete 0.0.0.0
-route add 0.0.0.0 mask 0.0.0.0 172.31.255.232
+route add 0.0.0.0 mask 0.0.0.0 192.168.0.232
 arp -d *
 ```
 
-Открой `https://api.ipify.org` в браузере — должен показать французский IP. Меняй шлюз на `.233` / `.234` — получишь шведский / финский.
+Open `https://api.ipify.org` in a browser — you should see a French IP. Switch the gateway to `.233` / `.234` to get a Swedish / Finnish IP.
 
-**Важно:** ICMP (`ping`, `tracert`) через VLESS **не работает**. Проверять исключительно по TCP (HTTP/HTTPS).
+**Important:** ICMP (`ping`, `tracert`) does **not** work through VLESS. Test strictly over TCP (HTTP/HTTPS).
 
-## Диагностика
+## Diagnostics
 
-Куда смотреть, если что-то не работает:
+Where to look when something breaks:
 
 ```bash
-# Все ли macvlan/tun подняты:
+# Are all macvlan/tun interfaces up:
 ip -4 addr show
 ip link show
 
-# Правила и таблицы:
+# Rules and tables:
 ip rule show
 ip route show table via_fr
 ip route show table via_se
 ip route show table via_fi
 
-# Счётчики mangle — растут при клиентском трафике:
+# Mangle counters — these grow under client traffic:
 iptables -t mangle -L PREROUTING -v -n
 
-# Счётчики NAT:
+# NAT counters:
 iptables -t nat -L POSTROUTING -v -n
 
-# Статус сервисов:
+# Service status:
 systemctl status setup-macvlan setup-routing
 systemctl status xray@fr xray@se xray@fi
 systemctl status tun2socks@fr tun2socks@se tun2socks@fi
 
-# Куда реально идут пакеты:
-tcpdump -ni xray-fr -c 10 'host <IP-клиента> and not port 22'
-tcpdump -ni tunfr  -c 10 'host <IP-клиента> and not port 22'
+# Where packets actually go:
+tcpdump -ni xray-fr -c 10 'host <client-IP> and not port 22'
+tcpdump -ni tunfr  -c 10 'host <client-IP> and not port 22'
 ```
 
-## Повторный запуск install.sh поверх рабочей системы
-
-`install.sh` идемпотентный — можно безопасно накатывать поверх уже настроенного контейнера, ничего не сломается.
-
-**Перезаписывается своим же содержимым (без побочных эффектов):**
-- `/etc/sysctl.d/99-arp.conf`, `/etc/sysctl.d/99-forward.conf`
-- `/etc/systemd/system/tun2socks@.service.d/link-up.conf`
-- `/usr/local/sbin/setup-macvlan.sh`, `/usr/local/sbin/setup-routing.sh`
-- `/etc/systemd/system/setup-macvlan.service`, `/etc/systemd/system/setup-routing.service`
-
-**Обновляется идемпотентно по логике:**
-- `/etc/iproute2/rt_tables` — строки добавляются только если их ещё нет (`grep -q`)
-- macvlan-интерфейсы — создаются только если их нет, IP добавляется только если его нет
-- iptables-правила — `iptables -t mangle -F PREROUTING` очищает и добавляет свежие; NAT через `-C ... || -A ...`
-- `ip rule` — `del 2>/dev/null; add` (снимает старое, добавляет свежее)
-
-**НЕ трогает:**
-- Конфиги `/etc/tun2socks/*.yaml`
-- Конфиги xray
-
-**Единственный побочный эффект:**
-При запуске сервисы `setup-macvlan`, `xray@<код>`, `tun2socks@<код>`, `setup-routing` будут перезапущены → кратковременный разрыв клиентских соединений на 2–5 секунд. Если критично — запускать в окно обслуживания.
-
-**Перед запуском** — проверить массив `COUNTRIES` в начале скрипта и убедиться, что коды, IP и fwmark'и совпадают с текущей конфигурацией. Запуск:
+Or just run the included diagnostic script:
 
 ```bash
-bash install.sh
+bash diag.sh          # full report
+bash diag.sh --quiet  # summary only
 ```
 
-## Повторный запуск install.sh поверх существующей установки
+## Re-running install.sh on a live system
 
-`install.sh` идемпотентен — его можно безопасно накатывать поверх уже работающей конфигурации (например, когда меняется список стран или нужно актуализировать версию).
+`install.sh` is idempotent — it can be safely re-applied on top of an already-configured container (e.g. when changing the country list or bumping a version).
 
-**Что перезаписывается своим же содержимым (безопасно):**
+**Files overwritten with identical content (safe):**
 
 - `/etc/sysctl.d/99-arp.conf`, `/etc/sysctl.d/99-forward.conf`
 - `/etc/systemd/system/tun2socks@.service.d/link-up.conf`
 - `/usr/local/sbin/setup-macvlan.sh`, `/usr/local/sbin/setup-routing.sh`
 - `/etc/systemd/system/setup-macvlan.service`, `/etc/systemd/system/setup-routing.service`
 
-**Идемпотентно по логике:**
+**Idempotent by logic:**
 
-- `/etc/iproute2/rt_tables` — строки добавляются только если их ещё нет (через `grep -q`).
-- macvlan-интерфейсы создаются только если отсутствуют; IP добавляется, только если его нет.
-- iptables mangle — `iptables -t mangle -F PREROUTING` очищает старое, потом ставятся актуальные правила.
-- iptables NAT — через `-C ... || -A ...`.
-- `ip rule` — `del ... 2>/dev/null; add ...` (снимаем возможный старый вариант, ставим свежий).
-- `systemctl enable` для всех сервисов — если уже enabled, это no-op.
+- `/etc/iproute2/rt_tables` — entries are appended only if not already present (via `grep -q`).
+- macvlan interfaces are created only if missing; IPs are added only if not already assigned.
+- iptables mangle — `iptables -t mangle -F PREROUTING` flushes old rules, fresh rules are added.
+- iptables NAT — guarded by `-C ... || -A ...`.
+- `ip rule` — `del ... 2>/dev/null; add ...` (remove any stale version, add the fresh one).
+- `systemctl enable` on all services — a no-op if already enabled.
 
-**Что скрипт НЕ трогает:**
+**What the script does NOT touch:**
 
-- Конфиги `/etc/tun2socks/*.yaml`.
-- Конфиги xray.
-- `/etc/sysconfig/iptables` — он перезапишется в самом конце скриптом `setup-routing.sh` через `iptables-save`.
+- `/etc/tun2socks/*.yaml` configs.
+- xray configs.
+- `/etc/sysconfig/iptables` — gets rewritten at the very end by `setup-routing.sh` via `iptables-save`.
 
-**Единственный заметный эффект:**
+**Only visible side effect:**
 
-Все сервисы будут `restart`'нуты (macvlan → xray@* → tun2socks@* → setup-routing). **Будет кратковременный разрыв клиентских соединений на ~2–5 секунд.** Если критично — запускай в окно обслуживания.
+All services get `restart`'ed (macvlan → xray@* → tun2socks@* → setup-routing). **Client connections will drop for ~2–5 seconds.** Schedule a maintenance window if that matters.
 
-**Как запустить повторно:**
+**Running it:**
 
 ```bash
 bash install.sh
 ```
 
-**Как проверить, что именно будет сделано, без реального запуска:**
+**Previewing without applying changes:**
 
 ```bash
 bash install.sh --dry-run
 ```
 
-В этом режиме скрипт показывает все команды, которые он выполнил бы, и содержимое всех файлов, которые он создал бы, — но реальных изменений в системе не делает. Проверки предусловий (наличие интерфейса, tun2socks, конфигов, xray-юнитов) выполняются как обычно — dry-run имеет смысл запускать там, где система уже готова.
+In dry-run mode the script prints every command it would execute and every file it would create, without making any real changes. Preconditions (interface presence, tun2socks, configs, xray units) are still checked — dry-run only makes sense on an already-prepared system.
 
-Если нужно поменять список стран — отредактируй массив `COUNTRIES` в начале скрипта и запусти заново. Скрипт перенастроит всё, включая удаление правил для стран, которых больше нет, только для тех артефактов, которые он контролирует (скрипты, юниты, mangle-правила — они полностью перегенерируются).
+To change the country list, edit the `COUNTRIES` array at the top of the script and re-run — it's idempotent and will reconfigure everything (including mangle rules), but only for artifacts it manages (scripts, units, and mangle rules are fully regenerated).
 
-**Что НЕ удалится автоматически при уменьшении списка стран:**
+**What does NOT get cleaned up automatically when shrinking the country list:**
 
-- Старые macvlan-интерфейсы (нужно `ip link del xray-<код>` вручную).
-- Старые записи в `/etc/iproute2/rt_tables` (безвредны, но можно почистить).
-- Старые включённые сервисы `xray@<код>` и `tun2socks@<код>` — их нужно `systemctl disable --now` вручную.
+- Orphaned macvlan interfaces (remove manually with `ip link del xray-<code>`).
+- Stale entries in `/etc/iproute2/rt_tables` (harmless, but can be cleaned up).
+- Previously-enabled `xray@<code>` and `tun2socks@<code>` services — disable them manually with `systemctl disable --now`.
 
-## Добавление новой страны
+## Adding a new country
 
-Чтобы добавить, например, Нидерланды (код `nl`, IP `.235`, tun `tunnl`, xray socks5 на `.235:10808`):
+To add e.g. the Netherlands (code `nl`, IP `.235`, tun `tunnl`, xray socks5 on `.235:10808`):
 
-1. Подготовить конфиг xray для `xray@nl` и конфиг `/etc/tun2socks/nl.yaml`.
-2. Добавить `103 via_nl` в `/etc/iproute2/rt_tables`.
-3. В `/usr/local/sbin/setup-macvlan.sh` добавить `setup_iface xray-nl 172.31.255.235`.
-4. В `/usr/local/sbin/setup-routing.sh`:
-   - Добавить `ip route replace default dev tunnl table via_nl` в блоке default'ов.
-   - Добавить `"103:via_nl"` в цикл `ip rule`.
-   - Добавить `iptables -t mangle -A PREROUTING -i xray-nl -j MARK --set-mark 103`.
-   - Добавить `tunnl` и `xray-nl` в циклы NAT и rp_filter.
-5. В `setup-macvlan.service` добавить `tun2socks@nl.service xray@nl.service` в `Before=`.
-6. В `setup-routing.service` добавить `tun2socks@nl.service xray@nl.service` в `After=`.
-7. Включить и запустить: `systemctl enable --now xray@nl tun2socks@nl`, потом `systemctl restart setup-routing.service`.
+1. Prepare an xray config for `xray@nl` and `/etc/tun2socks/nl.yaml`.
+2. Add `103 via_nl` to `/etc/iproute2/rt_tables`.
+3. In `/usr/local/sbin/setup-macvlan.sh` add `setup_iface xray-nl 192.168.0.235`.
+4. In `/usr/local/sbin/setup-routing.sh`:
+   - Add `ip route replace default dev tunnl table via_nl` to the default-route block.
+   - Add `"103:via_nl"` to the `ip rule` loop.
+   - Add `iptables -t mangle -A PREROUTING -i xray-nl -j MARK --set-mark 103`.
+   - Add `tunnl` and `xray-nl` to the NAT and rp_filter loops.
+5. In `setup-macvlan.service` add `tun2socks@nl.service xray@nl.service` to `Before=`.
+6. In `setup-routing.service` add `tun2socks@nl.service xray@nl.service` to `After=`.
+7. Enable and start: `systemctl enable --now xray@nl tun2socks@nl`, then `systemctl restart setup-routing.service`.
 
-Либо проще: отредактировать массив `COUNTRIES` в `install.sh` и запустить его заново — он идемпотентен и перенастроит всё с учётом новой страны.
+Or — simpler — edit the `COUNTRIES` array in `install.sh` and re-run it. It's idempotent and will reconfigure everything including the new country.
+
+## Migration to a new address plan
+
+`migrate.sh` moves the whole installation to a new subnet (e.g. when the provider changes your IP block). New-addressing parameters live in the `NEW_*` block at the top of the script.
+
+What it does:
+
+1. Verifies that `global` is already on the new subnet (if not, it prints the `pct set` command to run on the PVE host).
+2. Backs configs up to `/root/migrate-backup-<timestamp>/`.
+3. Updates `listen` in xray configs and `proxy: socks5://...` in tun2socks configs.
+4. Updates `COUNTRIES` and `NETMASK_BITS` in `install.sh` and `diag.sh`.
+5. Removes the old IPs from macvlan interfaces.
+6. Restarts xray, runs `install.sh` (which regenerates everything), runs `diag.sh`.
+
+Dry run:
+
+```bash
+bash migrate.sh --dry-run
+```
