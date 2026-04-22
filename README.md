@@ -9,7 +9,9 @@
 [![tun2socks](https://img.shields.io/badge/tun2socks-xjasonlyu-green)](https://github.com/xjasonlyu/tun2socks)
 [![Idempotent](https://img.shields.io/badge/install-idempotent-success)](#re-running-installsh-on-a-live-system)
 
-A single Proxmox container running multiple xray+tun2socks stacks — one per WAN exit. The client picks an exit by pointing its default gateway at a different IP: e.g. `.232` → first exit, `.233` → second, `.234` → third.
+A single Linux host running multiple xray+tun2socks stacks — one per WAN exit. The client picks an exit by pointing its default gateway at a different IP: e.g. `.232` → first exit, `.233` → second, `.234` → third.
+
+The host can be anything — a Proxmox LXC container, a VM on any hypervisor, a bare-metal server. The setup was developed on a Proxmox container (hence the prerequisites below referring to LXC/TUN passthrough), but the scheme itself only relies on Linux networking primitives (macvlan, iptables, policy routing, tun). Where you run it doesn't matter — the principle and the traffic flow do.
 
 ## Architecture
 
