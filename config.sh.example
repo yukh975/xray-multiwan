@@ -58,9 +58,9 @@ PARENT_IF="eth0"
 NETMASK_BITS="24"
 
 EXITS=(
-    "wan1:192.168.0.232:100"
-    "wan2:192.168.0.233:101"
-    "wan3:192.168.0.234:102"
+    "wan1:192.168.0.101:100"
+    "wan2:192.168.0.102:101"
+    "wan3:192.168.0.103:102"
 )
 
 # XRAY_CONFDIR / TUN2SOCKS_CONFDIR — directories for the respective service

@@ -9,7 +9,7 @@
 [![tun2socks](https://img.shields.io/badge/tun2socks-xjasonlyu-green)](https://github.com/xjasonlyu/tun2socks)
 [![Idempotent](https://img.shields.io/badge/install-idempotent-success)](#re-running-installsh-on-a-live-system)
 
-A single Linux host running multiple xray+tun2socks stacks — one per WAN exit. The client picks an exit by pointing its default gateway at a different IP: e.g. `.232` → first exit, `.233` → second, `.234` → third.
+A single Linux host running multiple xray+tun2socks stacks — one per WAN exit. The client picks an exit by pointing its default gateway at a different IP: e.g. `.101` → first exit, `.102` → second, `.103` → third.
 
 The host can be anything — a Proxmox LXC container, a VM on any hypervisor, a bare-metal server. The setup was developed on a Proxmox container (hence the prerequisites below referring to LXC/TUN passthrough), but the scheme itself only relies on Linux networking primitives (macvlan, iptables, policy routing, tun). Where you run it doesn't matter — the principle and the traffic flow do.
 
@@ -18,17 +18,17 @@ The host can be anything — a Proxmox LXC container, a VM on any hypervisor, a 
 ```
 Client (192.168.0.100)
   │
-  │ gateway = 192.168.0.232 (or .233, .234)
+  │ gateway = 192.168.0.101 (or .102, .103)
   ↓
 ┌────────────────────────────────────────────────────────┐
 │ Container (ALT Linux / Debian)                         │
 │                                                        │
 │ eth0 (192.168.0.230) ─ physical veth                   │
-│   ├─ xray-wan1 (192.168.0.232) ─ macvlan               │
+│   ├─ xray-wan1 (192.168.0.101) ─ macvlan               │
 │   │     └→ xray@wan1 socks5 :10808 ─→ tunwan1 ─→ out   │
-│   ├─ xray-wan2 (192.168.0.233) ─ macvlan               │
+│   ├─ xray-wan2 (192.168.0.102) ─ macvlan               │
 │   │     └→ xray@wan2 socks5 :10808 ─→ tunwan2 ─→ out   │
-│   └─ xray-wan3 (192.168.0.234) ─ macvlan               │
+│   └─ xray-wan3 (192.168.0.103) ─ macvlan               │
 │         └→ xray@wan3 socks5 :10808 ─→ tunwan3 ─→ out   │
 └────────────────────────────────────────────────────────┘
 ```
@@ -36,7 +36,7 @@ Client (192.168.0.100)
 **How gateway differentiation works:**
 
 1. Three macvlan sub-interfaces are created on top of `eth0`, each with its own MAC and IP.
-2. When the client sets `.232` as its gateway, ARP resolves that IP to the `xray-wan1` MAC — and frames arrive at that specific interface.
+2. When the client sets `.101` as its gateway, ARP resolves that IP to the `xray-wan1` MAC — and frames arrive at that specific interface.
 3. `iptables -t mangle` matches `-i xray-wan1` and stamps `fwmark 100` on the packet.
 4. `ip rule fwmark 100` routes the packet through table `via_wan1`.
 5. That table's default route goes through `tunwan1`.
@@ -52,9 +52,9 @@ Client (192.168.0.100)
    lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
    ```
 3. **xray** installed as a systemd template `xray@.service`, one instance per exit:
-   - `xray@wan1` listens on socks5 at `192.168.0.232:10808`
-   - `xray@wan2` listens on socks5 at `192.168.0.233:10808`
-   - `xray@wan3` listens on socks5 at `192.168.0.234:10808`
+   - `xray@wan1` listens on socks5 at `192.168.0.101:10808`
+   - `xray@wan2` listens on socks5 at `192.168.0.102:10808`
+   - `xray@wan3` listens on socks5 at `192.168.0.103:10808`
 4. **tun2socks** (xjasonlyu/tun2socks) installed at `/usr/bin/tun2socks`, with a systemd template `/usr/lib/systemd/system/tun2socks@.service`.
 5. **tun2socks configs** in `/etc/tun2socks/<n>.yaml`, where `<n>` = `wan1`, `wan2`, `wan3`. Required fields:
    - `device: tun://tun<n>` (tun2socks will create the tun device with that name)
@@ -76,9 +76,9 @@ PARENT_IF="eth0"                      # parent interface (e.g. eth0)
 NETMASK_BITS="24"                       # subnet prefix length
 
 EXITS=(
-    "wan1:192.168.0.232:100"              # code:IP:fwmark
-    "wan2:192.168.0.233:101"
-    "wan3:192.168.0.234:102"
+    "wan1:192.168.0.101:100"              # code:IP:fwmark
+    "wan2:192.168.0.102:101"
+    "wan3:192.168.0.103:102"
 )
 ```
 
@@ -102,7 +102,7 @@ Before anything else, set up each exit's xray instance and tun2socks config and 
 
 For each exit `<code>` (e.g. `wan1`):
 
-1. Write the xray config at `/etc/xray/<code>.json` with an outbound (VLESS/VMess/Trojan/etc.) to the upstream, and a SOCKS inbound bound to the macvlan IP of that exit (e.g. `192.168.0.232:10808`). Different exits **must** bind to different macvlan IPs — otherwise only one instance will listen.
+1. Write the xray config at `/etc/xray/<code>.json` with an outbound (VLESS/VMess/Trojan/etc.) to the upstream, and a SOCKS inbound bound to the macvlan IP of that exit (e.g. `192.168.0.101:10808`). Different exits **must** bind to different macvlan IPs — otherwise only one instance will listen.
 2. Make sure the systemd template `xray@.service` exists (it comes with XTLS/Xray-install) and start `xray@<code>` to verify the SOCKS inbound comes up.
 3. Write the tun2socks config at `/etc/tun2socks/<code>.yaml`:
    - `device: tun://tun<code>` — the tun device tun2socks will create
@@ -122,9 +122,9 @@ ip link add link eth0 name xray-wan2 type macvlan mode bridge
 ip link add link eth0 name xray-wan3 type macvlan mode bridge
 
 # Assign IPs:
-ip addr add 192.168.0.232/24 dev xray-wan1
-ip addr add 192.168.0.233/24 dev xray-wan2
-ip addr add 192.168.0.234/24 dev xray-wan3
+ip addr add 192.168.0.101/24 dev xray-wan1
+ip addr add 192.168.0.102/24 dev xray-wan2
+ip addr add 192.168.0.103/24 dev xray-wan3
 
 # Bring links up:
 ip link set xray-wan1 up
@@ -203,9 +203,9 @@ setup_iface() {
     fi
     ip link set "$name" up
 }
-setup_iface xray-wan1 192.168.0.232
-setup_iface xray-wan2 192.168.0.233
-setup_iface xray-wan3 192.168.0.234
+setup_iface xray-wan1 192.168.0.101
+setup_iface xray-wan2 192.168.0.102
+setup_iface xray-wan3 192.168.0.103
 EOF
 chmod +x /usr/local/sbin/setup-macvlan.sh
 
@@ -330,11 +330,11 @@ From a Windows client:
 
 ```cmd
 route delete 0.0.0.0
-route add 0.0.0.0 mask 0.0.0.0 192.168.0.232
+route add 0.0.0.0 mask 0.0.0.0 192.168.0.101
 arp -d *
 ```
 
-Open `https://api.ipify.org` in a browser — you should see the IP of the first upstream. Switch the gateway to `.233` / `.234` to get the IPs of the second and third upstreams.
+Open `https://api.ipify.org` in a browser — you should see the IP of the first upstream. Switch the gateway to `.102` / `.103` to get the IPs of the second and third upstreams.
 
 **Important:** ICMP (`ping`, `tracert`) does **not** work through VLESS. Test strictly over TCP (HTTP/HTTPS).
 
