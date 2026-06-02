@@ -394,7 +394,7 @@ check_tunnels() {
         local out=""
         local u
         for u in "${check_urls[@]}"; do
-            out=$(curl --socks5 "$socks" -s -m 10 "$u" 2>/dev/null | tr -d '"\n')
+            out=$(curl --socks5 "$socks" -s -m 10 "$u" 2>/dev/null | tr -d '"' | sed 's/\\n$//' )
             [ -n "$out" ] && break
         done
         if [ -n "$out" ]; then
