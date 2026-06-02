@@ -10,7 +10,7 @@
 #   - tun interfaces
 #   - ip rule and via_* tables
 #   - iptables mangle and NAT
-#   - tunnel connectivity (curl through each tun)
+#   - tunnel connectivity (socks5 through each xray)
 #
 # Usage:
 #   bash diag.sh
@@ -156,7 +156,7 @@ check_rt_tables() {
 
     for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
-        local mark="${item##*:}"
+        local mark="$(echo "$item" | cut -d: -f3)"
         local tbl="via_${code}"
         if grep -qE "^[[:space:]]*${mark}[[:space:]]+${tbl}\b" /etc/iproute2/rt_tables 2>/dev/null; then
             ok "${mark} ${tbl}"
@@ -310,7 +310,7 @@ check_ip_rules() {
 
     for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
-        local mark="${item##*:}"
+        local mark="$(echo "$item" | cut -d: -f3)"
         local tbl="via_${code}"
 
         if ip rule show | grep -qE "fwmark 0x$(printf '%x' "$mark")\b.*lookup ${tbl}"; then
@@ -348,7 +348,7 @@ check_iptables() {
 
     for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
-        local mark="${item##*:}"
+        local mark="$(echo "$item" | cut -d: -f3)"
         local iface="xray-${code}"
         local mark_hex
         mark_hex=$(printf '0x%x' "$mark")
@@ -377,7 +377,7 @@ check_iptables() {
 }
 
 check_tunnels() {
-    section "$(t "tunnel connectivity (curl through each tun)" "работоспособность туннелей (curl через каждый tun)")"
+    section "$(t "tunnel connectivity (socks5 through each xray)" "работоспособность туннелей (socks5 через каждый xray)")"
 
     if ! command -v curl >/dev/null 2>&1; then
         warn "$(t "curl not found — skipping connectivity check" "curl не найден — пропускаю проверку связности")"
@@ -385,16 +385,23 @@ check_tunnels() {
     fi
 
     local ips=()
+    local check_urls=("https://ifconfig.me/ip" "https://netadm.pro/ip" "https://api.ipify.org")
     for item in "${EXITS[@]}"; do
-        local code="${item%%:*}"
-        local tun="tun${code}"
-        local out
-        out=$(curl --interface "$tun" -s -m 10 https://api.ipify.org 2>/dev/null)
+        local code ip
+        code=$(echo "$item" | cut -d: -f1)
+        ip=$(echo "$item" | cut -d: -f2)
+        local socks="${ip}:10808"
+        local out=""
+        local u
+        for u in "${check_urls[@]}"; do
+            out=$(curl --socks5 "$socks" -s -m 10 "$u" 2>/dev/null | tr -d '"\n')
+            [ -n "$out" ] && break
+        done
         if [ -n "$out" ]; then
-            ok "$tun → $out"
+            ok "xray-${code} (socks $socks) → $out"
             ips+=("$out")
         else
-            fail "$(t "$tun: no response" "$tun: нет ответа")"
+            fail "$(t "xray-${code}: no response via socks $socks" "xray-${code}: нет ответа через socks $socks")"
         fi
     done
 

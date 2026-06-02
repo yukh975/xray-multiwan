@@ -22,7 +22,7 @@
 #             Длина маски подсети, в которой живут PARENT_IF и macvlan-IP
 #             (обычно 24, может быть 28 и т.п.).
 #
-# EXITS — list of WAN exits in "code:IP:fwmark" format:
+# EXITS — list of WAN exits in "code:IP:fwmark[:MAC]" format:
 #   * code    — short exit name (wan1, wan2, ...). Each <code> MUST match
 #               the names of your already-prepared per-exit resources:
 #                   xray@<code>.service        (xray instance name)
@@ -35,8 +35,12 @@
 #   * IP      — macvlan address in the same subnet as PARENT_IF. A client
 #               sets this IP as its default gateway.
 #   * fwmark  — unique iptables mark (commonly 100+) for policy routing.
+#   * MAC     — OPTIONAL fixed MAC for the macvlan interface. If omitted,
+#               the kernel assigns a random MAC on each boot, which can
+#               leave a stale ARP entry on the upstream router. Setting a
+#               fixed MAC keeps it stable across reboots.
 #
-#   Список WAN-выходов в формате "код:IP:fwmark":
+#   Список WAN-выходов в формате "код:IP:fwmark[:MAC]":
 #   * код     — короткое имя выхода (wan1, wan2, ...). Каждый <код>
 #               ДОЛЖЕН совпадать с именами уже подготовленных ресурсов:
 #                   xray@<код>.service         (имя инстанса xray)
@@ -50,6 +54,11 @@
 #   * IP      — адрес macvlan в той же подсети, что и PARENT_IF. Клиент
 #               указывает этот IP как default gateway.
 #   * fwmark  — уникальная метка iptables (обычно 100+) для policy routing.
+#   * MAC     — НЕОБЯЗАТЕЛЬНЫЙ фиксированный MAC для macvlan-интерфейса.
+#               Если не задан, ядро назначает случайный MAC при каждой
+#               загрузке, из-за чего на upstream-роутере может остаться
+#               протухшая ARP-запись. Фиксированный MAC делает его
+#               стабильным между перезагрузками.
 #
 #   Each exit is an arbitrary xray outbound — not tied to a country.
 #   Каждый выход — это произвольный xray outbound, не обязательно страна.
@@ -60,7 +69,7 @@ NETMASK_BITS="24"
 EXITS=(
     "wan1:192.168.0.101:100"
     "wan2:192.168.0.102:101"
-    "wan3:192.168.0.103:102"
+    "wan3:192.168.0.103:102:02:00:00:00:01:03"
 )
 
 # XRAY_CONFDIR / TUN2SOCKS_CONFDIR — directories for the respective service

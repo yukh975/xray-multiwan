@@ -311,7 +311,7 @@ write_rt_tables() {
            "Добавляю таблицы маршрутизации в /etc/iproute2/rt_tables")"
     for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
-        local mark="${item##*:}"
+        local mark="$(echo "$item" | cut -d: -f3)"
         local tbl="via_${code}"
         if ! grep -qE "^[[:space:]]*${mark}[[:space:]]+${tbl}$" /etc/iproute2/rt_tables 2>/dev/null; then
             if [ "$DRY_RUN" -eq 1 ]; then
@@ -342,27 +342,43 @@ EOF
 write_macvlan_script() {
     log "$(t "Writing /usr/local/sbin/setup-macvlan.sh" \
            "Создаю /usr/local/sbin/setup-macvlan.sh")"
-
     local pairs=""
     for item in "${EXITS[@]}"; do
-        local code="${item%%:*}"
-        local rest="${item#*:}"
-        local ip="${rest%%:*}"
-        pairs+="setup_iface xray-${code} ${ip}"$'\n'
+        local code ip mac
+        code=$(echo "$item" | cut -d: -f1)
+        ip=$(echo "$item" | cut -d: -f2)
+        mac=$(echo "$item" | cut -d: -f4-)
+        pairs+="setup_iface xray-${code} ${ip} ${mac}"$'\n'
     done
-
     write_file /usr/local/sbin/setup-macvlan.sh 755 <<EOF
 #!/bin/bash
-# Create macvlan sub-interfaces on top of ${PARENT_IF}.
 setup_iface() {
     local name="\$1"
     local addr="\$2"
-    ip link show "\$name" &>/dev/null || \\
-        ip link add link ${PARENT_IF} name "\$name" type macvlan mode bridge
+    local mac="\${3:-}"
+    if ! ip link show "\$name" &>/dev/null; then
+        if [ -n "\$mac" ]; then
+            ip link add link ${PARENT_IF} name "\$name" address "\$mac" type macvlan mode bridge
+        else
+            ip link add link ${PARENT_IF} name "\$name" type macvlan mode bridge
+        fi
+    elif [ -n "\$mac" ]; then
+        local cur
+        cur=\$(ip link show "\$name" | awk '/link\\/ether/ {print \$2}')
+        if [ "\$cur" != "\$mac" ]; then
+            ip link del "\$name"
+            ip link add link ${PARENT_IF} name "\$name" address "\$mac" type macvlan mode bridge
+        fi
+    fi
     if ! ip -4 -o addr show dev "\$name" | awk '{print \$4}' | grep -qx "\${addr}/${NETMASK_BITS}"; then
         ip addr add "\${addr}/${NETMASK_BITS}" dev "\$name" 2>/dev/null || true
     fi
     ip link set "\$name" up
+    local gw
+    gw=\$(ip route show default 2>/dev/null | awk '/^default/{print \$3; exit}')
+    if [ -n "\$gw" ]; then
+        ping -c 1 -W 1 -I "\$addr" "\$gw" >/dev/null 2>&1 || true
+    fi
 }
 ${pairs}
 EOF
@@ -408,7 +424,7 @@ write_routing_script() {
         local code="${item%%:*}"
         local rest="${item#*:}"
         local ip="${rest%%:*}"
-        local mark="${rest##*:}"
+        local mark="$(echo "$item" | cut -d: -f3)"
         local tbl="via_${code}"
 
         tuns+=" tun${code}"
@@ -595,7 +611,7 @@ uninstall_all() {
            "Удаляю ip rule и таблицы маршрутов")"
     for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
-        local mark="${item##*:}"
+        local mark="$(echo "$item" | cut -d: -f3)"
         local tbl="via_${code}"
         # Loop the del in case the rule was added multiple times.
         while ip rule show | grep -qE "fwmark 0x$(printf '%x' "$mark")\b.*lookup ${tbl}"; do
@@ -633,7 +649,7 @@ uninstall_all() {
            "Чищу /etc/iproute2/rt_tables")"
     for item in "${EXITS[@]}"; do
         local code="${item%%:*}"
-        local mark="${item##*:}"
+        local mark="$(echo "$item" | cut -d: -f3)"
         local tbl="via_${code}"
         if [ "$DRY_RUN" -eq 1 ]; then
             echo "  + $(t "would remove line:" "удалил бы строку:") ${mark} ${tbl}"
