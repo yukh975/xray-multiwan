@@ -13,6 +13,23 @@ A single Linux host running multiple xray+tun2socks stacks — one per WAN exit.
 
 The host can be anything — a Proxmox LXC container, a VM on any hypervisor, a bare-metal server. The setup was developed on a Proxmox container (hence the prerequisites below referring to LXC/TUN passthrough), but the scheme itself only relies on Linux networking primitives (macvlan, iptables, policy routing, tun). Where you run it doesn't matter — the principle and the traffic flow do.
 
+## Contents
+
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Before first run: edit `config.sh`](#before-first-run-edit-configsh)
+- [Uninstall](#uninstall)
+- [Step-by-step installation](#step-by-step-installation)
+- [Diagnostics](#diagnostics)
+- [Tunnel monitoring (tunnel-monitor)](#tunnel-monitoring-tunnel-monitor)
+  - [Installation](#installation)
+  - [Configuration](#configuration-tunnel-monitorconf)
+  - [Checking](#checking)
+- [Re-running install.sh on a live system](#re-running-installsh-on-a-live-system)
+- [Adding a new exit](#adding-a-new-exit)
+- [Migration to a new address plan](#migration-to-a-new-address-plan)
+- [Author](#author)
+
 ## Architecture
 
 ```
