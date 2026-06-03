@@ -1,0 +1,26 @@
+# Имя сервера в алертах (если пусто/нет строки — берётся hostname)
+MONITOR_NAME="gateway-1"
+# === Telegram ===
+TG_BOT_TOKEN="123456:AAExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+TG_CHAT_ID="123456789"
+
+# === Канал доставки алертов ===
+# Сначала пробуем фиксированный socks (PRIMARY), при неудаче —
+# перебираем живые локальные xray-выходы из EXITS.
+# PRIMARY socks (dante fr-par). Оставь пустым, чтобы пропустить и
+# слать только через локальные выходы.
+PRIMARY_SOCKS="socks5://user:password@proxy.example.com:1080"
+
+# === Поведение ===
+# always  = слать при каждом падении (даже если рестарт помог)
+# on_fail = слать только если рестарт НЕ помог
+ALERT_MODE="always"
+
+# Ожидание после рестарта перед повторной проверкой (сек)
+RESTART_WAIT=10
+
+# URL для проверки доступности выхода (перебираются по очереди)
+CHECK_URLS="https://ifconfig.me/ip https://netadm.pro/ip"
+
+# socks-порт локальных xray-выходов
+SOCKS_PORT=10808

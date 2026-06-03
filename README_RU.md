@@ -394,6 +394,68 @@ tcpdump -ni xray-wan1 -c 10 'host <IP-клиента> and not port 22'
 tcpdump -ni tunwan1  -c 10 'host <IP-клиента> and not port 22'
 ```
 
+
+## Мониторинг туннелей (tunnel-monitor)
+
+Периодическая проверка работоспособности выходов с автоматическим
+перезапуском упавших и алертами в Telegram.
+
+Что делает при каждом запуске:
+
+1. Читает выходы из `config.sh` (массив `EXITS`).
+2. Проверяет каждый выход через его SOCKS5 (`<IP>:10808`), запрашивая
+   IP через список URL из `CHECK_URLS` (перебор по очереди).
+3. Если выход не отвечает — перезапускает `xray@<code>` и
+   `tun2socks@<code>`, ждёт `RESTART_WAIT` секунд, проверяет повторно.
+4. Шлёт алерт в Telegram (режим `ALERT_MODE`: `always` — при каждом
+   падении, даже если рестарт помог; `on_fail` — только если не помог).
+5. Пишет результат в `tunnel-monitor.log`.
+
+Доставка алертов отказоустойчивая: сначала через `PRIMARY_SOCKS`
+(внешний прокси), при неудаче — перебор живых локальных выходов.
+
+### Установка
+
+```bash
+# из каталога с проектом:
+cp tunnel-monitor.conf.example tunnel-monitor.conf
+# заполнить TG_BOT_TOKEN, TG_CHAT_ID, PRIMARY_SOCKS, MONITOR_NAME:
+nano tunnel-monitor.conf
+
+# установка (спросит каталог, по умолчанию /opt/xray-multiwan):
+bash install-monitor.sh
+```
+
+`install-monitor.sh` скопирует проект в выбранный каталог, сгенерирует
+systemd-юниты `tunnel-monitor.service` и `tunnel-monitor.timer` с
+правильным путём и включит таймер (запуск раз в час).
+
+### Конфигурация (`tunnel-monitor.conf`)
+
+| Параметр | Назначение |
+| --- | --- |
+| `MONITOR_NAME` | Имя сервера в тексте алерта (если пусто — `hostname`) |
+| `TG_BOT_TOKEN` | Токен Telegram-бота |
+| `TG_CHAT_ID` | ID чата/пользователя для алертов |
+| `PRIMARY_SOCKS` | Внешний SOCKS для отправки (пробуется первым; пусто — только локальные выходы) |
+| `ALERT_MODE` | `always` или `on_fail` |
+| `RESTART_WAIT` | Пауза после рестарта перед повторной проверкой (сек) |
+| `CHECK_URLS` | URL для проверки выхода (перебор) |
+| `SOCKS_PORT` | Порт SOCKS5 локальных выходов (обычно 10808) |
+
+Файл с секретами (`tunnel-monitor.conf`) в репозиторий не коммитится
+(в `.gitignore`); в репозитории — только `tunnel-monitor.conf.example`.
+
+### Проверка
+
+```bash
+# ручной прогон:
+/opt/xray-multiwan/tunnel-monitor.sh
+cat /opt/xray-multiwan/tunnel-monitor.log
+
+# статус таймера и время следующего запуска:
+systemctl list-timers tunnel-monitor.timer
+```
 ## Повторный запуск install.sh поверх рабочей системы
 
 `install.sh` идемпотентен — его можно безопасно накатывать поверх уже работающей конфигурации (например, когда меняется список выходов или нужно актуализировать версию).

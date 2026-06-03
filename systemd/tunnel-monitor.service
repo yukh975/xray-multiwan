@@ -1,0 +1,8 @@
+[Unit]
+Description=Tunnel monitor (xray exits health check + Telegram alerts)
+After=network-online.target setup-routing.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/root/xray-multiwan/tunnel-monitor.sh

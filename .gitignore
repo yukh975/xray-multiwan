@@ -1,2 +1,4 @@
 config.sh
 *.bak.*
+tunnel-monitor.conf
+tunnel-monitor.log

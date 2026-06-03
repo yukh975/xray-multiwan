@@ -394,6 +394,68 @@ tcpdump -ni xray-wan1 -c 10 'host <client-IP> and not port 22'
 tcpdump -ni tunwan1  -c 10 'host <client-IP> and not port 22'
 ```
 
+
+## Tunnel monitoring (tunnel-monitor)
+
+Periodic health-check of exits with automatic restart of failed ones
+and Telegram alerts.
+
+What it does on each run:
+
+1. Reads exits from `config.sh` (`EXITS` array).
+2. Checks each exit through its SOCKS5 (`<IP>:10808`), requesting the
+   IP via the `CHECK_URLS` list (tried in order).
+3. If an exit does not respond — restarts `xray@<code>` and
+   `tun2socks@<code>`, waits `RESTART_WAIT` seconds, re-checks.
+4. Sends a Telegram alert (`ALERT_MODE`: `always` — on every failure,
+   even if the restart fixed it; `on_fail` — only if it did not).
+5. Logs the result to `tunnel-monitor.log`.
+
+Alert delivery is fault-tolerant: first via `PRIMARY_SOCKS` (external
+proxy), then falling back to live local exits.
+
+### Installation
+
+```bash
+# from the project directory:
+cp tunnel-monitor.conf.example tunnel-monitor.conf
+# fill in TG_BOT_TOKEN, TG_CHAT_ID, PRIMARY_SOCKS, MONITOR_NAME:
+nano tunnel-monitor.conf
+
+# install (asks for target dir, default /opt/xray-multiwan):
+bash install-monitor.sh
+```
+
+`install-monitor.sh` copies the project to the chosen directory,
+generates the `tunnel-monitor.service` and `tunnel-monitor.timer`
+systemd units with the correct path, and enables the timer (runs hourly).
+
+### Configuration (`tunnel-monitor.conf`)
+
+| Parameter | Purpose |
+| --- | --- |
+| `MONITOR_NAME` | Server name in alert text (empty — uses `hostname`) |
+| `TG_BOT_TOKEN` | Telegram bot token |
+| `TG_CHAT_ID` | Chat/user ID for alerts |
+| `PRIMARY_SOCKS` | External SOCKS for delivery (tried first; empty — local exits only) |
+| `ALERT_MODE` | `always` or `on_fail` |
+| `RESTART_WAIT` | Pause after restart before re-check (sec) |
+| `CHECK_URLS` | URLs to verify an exit (tried in order) |
+| `SOCKS_PORT` | Local exits SOCKS5 port (usually 10808) |
+
+The secrets file (`tunnel-monitor.conf`) is not committed (in
+`.gitignore`); only `tunnel-monitor.conf.example` is in the repo.
+
+### Checking
+
+```bash
+# manual run:
+/opt/xray-multiwan/tunnel-monitor.sh
+cat /opt/xray-multiwan/tunnel-monitor.log
+
+# timer status and next run time:
+systemctl list-timers tunnel-monitor.timer
+```
 ## Re-running install.sh on a live system
 
 `install.sh` is idempotent — it can be safely re-applied on top of an already-configured container (e.g. when changing the exit list or bumping a version).
