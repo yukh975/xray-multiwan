@@ -335,7 +335,7 @@ write_tun2socks_dropin() {
            "Добавляю ExecStartPost для tun2socks@.service (поднятие tun)")"
     write_file /etc/systemd/system/tun2socks@.service.d/link-up.conf <<'EOF'
 [Service]
-ExecStartPost=/bin/sh -c 'for i in 1 2 3 4 5; do ip link show tun%i >/dev/null 2>&1 && break; sleep 1; done; ip link set tun%i up'
+ExecStartPost=/bin/sh -c 'for i in 1 2 3 4 5; do ip link show tun%i >/dev/null 2>&1 && break; sleep 1; done; ip link set tun%i up; ip route replace default dev tun%i table via_%i'
 EOF
 }
 
