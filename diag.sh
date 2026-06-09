@@ -391,14 +391,18 @@ check_tunnels() {
         code=$(echo "$item" | cut -d: -f1)
         ip=$(echo "$item" | cut -d: -f2)
         local socks="${ip}:10808"
-        local out=""
-        local u
+        local out="" ms=""
+        local u raw
         for u in "${check_urls[@]}"; do
-            out=$(curl --socks5 "$socks" -s -m 10 "$u" 2>/dev/null | tr -d '"' | sed 's/\\n$//' )
-            [ -n "$out" ] && break
+            raw=$(curl --socks5 "$socks" -s -m 10 -w '\n%{time_total}' "$u" 2>/dev/null)
+            out=$(echo "$raw" | sed '$d' | tr -d '"' | sed 's/\\n$//')
+            if [ -n "$out" ]; then
+                ms=$(echo "$raw" | tail -1 | awk '{printf "%d", $1*1000}')
+                break
+            fi
         done
         if [ -n "$out" ]; then
-            ok "xray-${code} (socks $socks) → $out"
+            ok "xray-${code} (socks $socks) → $out (${ms}ms)"
             ips+=("$out")
         else
             fail "$(t "xray-${code}: no response via socks $socks" "xray-${code}: нет ответа через socks $socks")"
