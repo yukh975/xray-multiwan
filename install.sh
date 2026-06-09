@@ -559,13 +559,21 @@ verify() {
     iptables -t nat -L POSTROUTING -v -n
 
     echo
-    log "$(t "Connectivity check (curl per tun):" \
-           "Проверка связности (curl через каждый tun):")"
+    log "$(t "Connectivity check (socks5 per exit):" \
+           "Проверка связности (socks5 через каждый выход):")"
+    local check_urls="https://ifconfig.me/ip https://netadm.pro/ip https://api.ipify.org"
     for item in "${EXITS[@]}"; do
-        local code="${item%%:*}"
-        local tun="tun${code}"
-        printf "  %s: " "$tun"
-        if out=$(curl --interface "$tun" -s -m 10 https://api.ipify.org 2>/dev/null); then
+        local code ip socks out u
+        code=$(echo "$item" | cut -d: -f1)
+        ip=$(echo "$item" | cut -d: -f2)
+        socks="${ip}:10808"
+        out=""
+        for u in $check_urls; do
+            out=$(curl --socks5 "$socks" -s -m 10 "$u" 2>/dev/null | tr -d '"' | sed 's/\\n$//')
+            [ -n "$out" ] && break
+        done
+        printf "  xray-%s (socks %s): " "$code" "$socks"
+        if [ -n "$out" ]; then
             echo "$out"
         else
             echo "FAIL"
