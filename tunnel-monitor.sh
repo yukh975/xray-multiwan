@@ -74,6 +74,96 @@ send_telegram() {
     return 1
 }
 
+
+# --- честное состояние выхода для мониторинга в OPNsense ---
+# Зачем: OPNsense мониторит сам адрес выхода он-линк пингом, а раньше мерил
+# анкасты через туннель — и мёртвый выход оставался "зелёным", failover не срабатывал
+# (поймано 19.08.2026). Мёртвый выход теперь: маршрут в blackhole + адрес молчит
+# на ICMP. Живой: маршрут через tun<код> + ICMP отвечает.
+STATE_DIR=/run/tunnel-monitor
+mkdir -p "$STATE_DIR"
+
+vip_iface() { echo "xray-$1"; }
+
+vip_present() {
+    local code="$1" ip="$2"
+    ip addr show dev "$(vip_iface "$code")" 2>/dev/null | grep -q "inet ${ip}/"
+}
+
+# Общее для обоих переходов: адрес выхода должен быть на месте ВСЕГДА.
+# Без него OPNsense не может разрешить ARP, dpinger перестаёт слать пробы и
+# замирает на последних значениях — шлюз остаётся «Online» с нулевыми потерями
+# (проверено 19.08.2026). Гасим не адрес, а ответ на ICMP.
+# Длину префикса берём с интерфейса, на котором маршрут по умолчанию:
+# на одной площадке сеть /28, на другой /24 — хардкод сюда не годится.
+vip_prefix() {
+    local dev pfx
+    dev=$(ip -4 route show default table main 2>/dev/null | awk '{print $5; exit}')
+    pfx=$(ip -4 -o addr show dev "$dev" 2>/dev/null | awk '{split($4,a,"/"); print a[2]; exit}')
+    echo "${pfx:-24}"
+}
+
+vip_ensure_addr() {
+    local code="$1" ip="$2"
+    if ! vip_present "$code" "$ip"; then
+        ip addr add "${ip}/$(vip_prefix)" dev "$(vip_iface "$code")" 2>/dev/null \
+            && log "VIP  $code: адрес $ip возвращён"
+    fi
+}
+
+vip_down() {
+    local code="$1" ip="$2"
+    vip_ensure_addr "$code" "$ip"
+    # Трафику некуда идти: чёрная дыра вместо маршрута по умолчанию в таблице выхода.
+    if ip route replace blackhole default table "via_${code}" 2>/dev/null; then
+        log "GW   $code: таблица via_${code} переведена в blackhole — шлюз в OPNsense погашен"
+    fi
+    # OPNsense мониторит сам адрес выхода (он-линк пинг). Пока адрес отвечает,
+    # шлюз считается живым, поэтому перестаём отвечать на ICMP: dpinger видит
+    # 100 % потерь и failover срабатывает честно.
+    if ! iptables -C INPUT -d "$ip" -p icmp --icmp-type echo-request -j DROP 2>/dev/null; then
+        iptables -I INPUT -d "$ip" -p icmp --icmp-type echo-request -j DROP 2>/dev/null \
+            && log "GW   $code: ICMP на $ip заблокирован — шлюз в OPNsense погаснет"
+    fi
+    # tun2socks НЕ останавливаем: устройство tun<код> нужно, чтобы при
+    # восстановлении было куда вернуть маршрут (иначе выход «оживает» по SOCKS,
+    # ICMP разблокируется, а трафик продолжает уходить в blackhole).
+}
+
+vip_up() {
+    local code="$1" ip="$2" i
+    vip_ensure_addr "$code" "$ip"
+    # устройства нет (например, сервис упал) — поднимаем и ждём появления
+    if ! ip link show "tun${code}" >/dev/null 2>&1; then
+        systemctl is-active --quiet "tun2socks@${code}.service" \
+            || systemctl start "tun2socks@${code}.service" 2>/dev/null
+        for i in $(seq 1 10); do
+            ip link show "tun${code}" >/dev/null 2>&1 && break
+            sleep 1
+        done
+    fi
+    # возвращаем маршрут через туннель вместо чёрной дыры
+    if ip route show table "via_${code}" 2>/dev/null | grep -q "^blackhole"; then
+        if ip link show "tun${code}" >/dev/null 2>&1; then
+            ip route replace default dev "tun${code}" table "via_${code}" 2>/dev/null \
+                && log "GW   $code: маршрут через tun${code} восстановлен"
+        else
+            log "GW   $code: tun${code} не появился — оставляю blackhole и блокировку ICMP"
+            return 0
+        fi
+    fi
+    # ICMP разблокируем ПОСЛЕДНИМ: только когда трафику есть куда идти,
+    # иначе шлюз в OPNsense зеленеет, а пакеты уходят в чёрную дыру.
+    while iptables -C INPUT -d "$ip" -p icmp --icmp-type echo-request -j DROP 2>/dev/null; do
+        iptables -D INPUT -d "$ip" -p icmp --icmp-type echo-request -j DROP 2>/dev/null \
+            && log "GW   $code: ICMP на $ip разблокирован"
+    done
+}
+
+# состояние выхода между запусками: чтобы слать в Telegram только смену состояния
+state_get() { cat "$STATE_DIR/$1.state" 2>/dev/null || echo up; }
+state_set() { echo "$2" > "$STATE_DIR/$1.state"; }
+
 # --- основная логика ---
 main() {
     echo "" >> "$LOG"
@@ -86,6 +176,11 @@ main() {
 
         if ip_out=$(check_exit "$socks"); then
             log "OK   $code ($socks) -> $ip_out"
+            vip_up "$code" "$ip"
+            if [ "$(state_get "$code")" = "down" ]; then
+                alert_lines+="✅ <b>${code}</b> снова работает (${ip_out}), маршрут и ICMP возвращены"$'\n'
+            fi
+            state_set "$code" up
             continue
         fi
 
@@ -97,12 +192,18 @@ main() {
 
         if ip_out=$(check_exit "$socks"); then
             log "RECOVERED $code ($socks) -> $ip_out after restart"
+            vip_up "$code" "$ip"
+            state_set "$code" up
             if [ "$ALERT_MODE" = "always" ]; then
                 alert_lines+="⚠️ <b>${code}</b> упал, восстановлен после рестарта (${ip_out})"$'\n'
             fi
         else
             log "STILL DOWN $code ($socks) after restart"
-            alert_lines+="🔴 <b>${code}</b> НЕ восстановлен после рестарта"$'\n'
+            vip_down "$code" "$ip"
+            if [ "$(state_get "$code")" != "down" ]; then
+                alert_lines+="🔴 <b>${code}</b> НЕ восстановлен после рестарта (маршрут в blackhole, шлюз в OPNsense погашен)"$'\n'
+            fi
+            state_set "$code" down
         fi
     done
 

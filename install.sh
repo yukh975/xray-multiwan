@@ -455,6 +455,10 @@ ${default_routes}
 ${ip_rules}
 # Mark packets by ingress interface.
 iptables -t mangle -F PREROUTING
+# ICMP bypasses the tunnels: VLESS/SOCKS5 cannot carry ICMP, so tun2socks
+# answers every echo-request by itself and any address looks alive.
+# Unmarked ICMP falls through to the main table and leaves via the normal WAN.
+iptables -t mangle -A PREROUTING -p icmp -j ACCEPT
 ${mangle_rules}
 # NAT on the way out.
 for t in${tuns}; do
