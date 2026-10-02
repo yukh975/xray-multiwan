@@ -340,48 +340,15 @@ EOF
 }
 
 write_macvlan_script() {
-    log "$(t "Writing /usr/local/sbin/setup-macvlan.sh" \
-           "Создаю /usr/local/sbin/setup-macvlan.sh")"
-    local pairs=""
-    for item in "${EXITS[@]}"; do
-        local code ip mac
-        code=$(echo "$item" | cut -d: -f1)
-        ip=$(echo "$item" | cut -d: -f2)
-        mac=$(echo "$item" | cut -d: -f4-)
-        pairs+="setup_iface xray-${code} ${ip} ${mac}"$'\n'
-    done
-    write_file /usr/local/sbin/setup-macvlan.sh 755 <<EOF
-#!/bin/bash
-setup_iface() {
-    local name="\$1"
-    local addr="\$2"
-    local mac="\${3:-}"
-    if ! ip link show "\$name" &>/dev/null; then
-        if [ -n "\$mac" ]; then
-            ip link add link ${PARENT_IF} name "\$name" address "\$mac" type macvlan mode bridge
-        else
-            ip link add link ${PARENT_IF} name "\$name" type macvlan mode bridge
-        fi
-    elif [ -n "\$mac" ]; then
-        local cur
-        cur=\$(ip link show "\$name" | awk '/link\\/ether/ {print \$2}')
-        if [ "\$cur" != "\$mac" ]; then
-            ip link del "\$name"
-            ip link add link ${PARENT_IF} name "\$name" address "\$mac" type macvlan mode bridge
-        fi
-    fi
-    if ! ip -4 -o addr show dev "\$name" | awk '{print \$4}' | grep -qx "\${addr}/${NETMASK_BITS}"; then
-        ip addr add "\${addr}/${NETMASK_BITS}" dev "\$name" 2>/dev/null || true
-    fi
-    ip link set "\$name" up
-    local gw
-    gw=\$(ip route show default 2>/dev/null | awk '/^default/{print \$3; exit}')
-    if [ -n "\$gw" ]; then
-        ping -c 1 -W 1 -I "\$addr" "\$gw" >/dev/null 2>&1 || true
-    fi
-}
-${pairs}
-EOF
+    log "$(t "Installing /usr/local/sbin/setup-macvlan.sh" \
+           "Ставлю /usr/local/sbin/setup-macvlan.sh")"
+    # Config-driven: ship the static script, inject the config.sh path. It reads
+    # EXITS at runtime, so editing config.sh (and rebooting) is enough.
+    [ -f "$SCRIPT_DIR/setup-macvlan.sh" ] || \
+        die "$(t "setup-macvlan.sh not found next to install.sh" \
+               "setup-macvlan.sh не найден рядом с install.sh")"
+    sed "s#__CONFIG_SH__#${CONFIG_SH}#g" "$SCRIPT_DIR/setup-macvlan.sh" \
+        | write_file /usr/local/sbin/setup-macvlan.sh 755
 }
 
 write_macvlan_unit() {
@@ -410,74 +377,15 @@ EOF
 }
 
 write_routing_script() {
-    log "$(t "Writing /usr/local/sbin/setup-routing.sh" \
-           "Создаю /usr/local/sbin/setup-routing.sh")"
-
-    local tuns=""
-    local xrays=""
-    local wait_tun_list=""
-    local default_routes=""
-    local ip_rules=""
-    local mangle_rules=""
-
-    for item in "${EXITS[@]}"; do
-        local code="${item%%:*}"
-        local rest="${item#*:}"
-        local ip="${rest%%:*}"
-        local mark="$(echo "$item" | cut -d: -f3)"
-        local tbl="via_${code}"
-
-        tuns+=" tun${code}"
-        xrays+=" xray-${code}"
-        wait_tun_list+=" tun${code}"
-
-        default_routes+="ip route replace default dev tun${code} table ${tbl}"$'\n'
-        ip_rules+="ip rule del fwmark ${mark} table ${tbl} 2>/dev/null"$'\n'
-        ip_rules+="ip rule add fwmark ${mark} table ${tbl}"$'\n'
-        mangle_rules+="iptables -t mangle -A PREROUTING -i xray-${code} -j MARK --set-mark ${mark}"$'\n'
-    done
-
-    write_file /usr/local/sbin/setup-routing.sh 755 <<EOF
-#!/bin/bash
-# Policy routing for multi-WAN tun setup.
-
-# Wait for tun interfaces to appear (up to 30s).
-for t in${wait_tun_list}; do
-    for i in \$(seq 1 30); do
-        ip link show "\$t" &>/dev/null && break
-        sleep 1
-    done
-done
-
-# Default routes in per-exit tables.
-${default_routes}
-# ip rule: fwmark → table.
-${ip_rules}
-# Mark packets by ingress interface.
-iptables -t mangle -F PREROUTING
-# ICMP bypasses the tunnels: VLESS/SOCKS5 cannot carry ICMP, so tun2socks
-# answers every echo-request by itself and any address looks alive.
-# Unmarked ICMP falls through to the main table and leaves via the normal WAN.
-iptables -t mangle -A PREROUTING -p icmp -j ACCEPT
-${mangle_rules}
-# NAT on the way out.
-for t in${tuns}; do
-    iptables -t nat -C POSTROUTING -o "\$t" -j MASQUERADE 2>/dev/null || \\
-        iptables -t nat -A POSTROUTING -o "\$t" -j MASQUERADE
-done
-
-# rp_filter=0 for every interface we touch.
-for i in${xrays}${tuns} ${PARENT_IF}; do
-    sysctl -w net.ipv4.conf.\$i.rp_filter=0 >/dev/null 2>&1 || true
-done
-
-ip route flush cache
-
-# Persist iptables if /etc/sysconfig exists.
-if [ -d /etc/sysconfig ]; then
-    iptables-save > /etc/sysconfig/iptables
-fi
-EOF
+    log "$(t "Installing /usr/local/sbin/setup-routing.sh" \
+           "Ставлю /usr/local/sbin/setup-routing.sh")"
+    # Config-driven: ship the static script, inject the config.sh path. It reads
+    # EXITS at runtime and flushes anything belonging to a removed exit.
+    [ -f "$SCRIPT_DIR/setup-routing.sh" ] || \
+        die "$(t "setup-routing.sh not found next to install.sh" \
+               "setup-routing.sh не найден рядом с install.sh")"
+    sed "s#__CONFIG_SH__#${CONFIG_SH}#g" "$SCRIPT_DIR/setup-routing.sh" \
+        | write_file /usr/local/sbin/setup-routing.sh 755
 }
 
 write_routing_unit() {
@@ -565,7 +473,7 @@ verify() {
     echo
     log "$(t "Connectivity check (socks5 per exit):" \
            "Проверка связности (socks5 через каждый выход):")"
-    local check_urls="https://ifconfig.me/ip https://netadm.pro/ip https://api.ipify.org"
+    local check_urls="https://ifconfig.me/ip https://api.ipify.org https://icanhazip.com"
     for item in "${EXITS[@]}"; do
         local code ip socks out u
         code=$(echo "$item" | cut -d: -f1)

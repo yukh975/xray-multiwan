@@ -1,23 +1,28 @@
-# Добавление нового выхода (exit) в xray-multiwan
+# Adding a new exit to xray-multiwan
 
-Пошаговая инструкция на примере добавления выхода `pl`
-(IP `172.31.254.25`, интерфейс `xray-pl`/`tunpl`, fwmark `104`,
-upstream `pl-war.netadm.pro`).
+Step-by-step, using the example of adding exit `wan4`
+(IP `192.168.0.104`, interfaces `xray-wan4`/`tunwan4`, fwmark `103`,
+upstream `node4.example.com`).
 
-Подставляй свои значения:
-- `<code>`      — короткое имя выхода (pl)
-- `<IP>`        — адрес macvlan в подсети PARENT_IF (172.31.254.25)
-- `<fwmark>`    — следующая свободная метка (100, 101, ... → 104)
-- `<upstream>`  — домен ноды на принимающей стороне (pl-war.netadm.pro)
-- `<tun>`       — имя tun-устройства (tunpl)
+The setup scripts are **config-driven**: `setup-macvlan.sh` and
+`setup-routing.sh` read `EXITS` from `config.sh` at runtime, so after you create
+the per-exit configs the only source of truth is `config.sh`. `install.sh`
+applies the change (and a reboot would too).
 
-Проект предполагается в `/opt/xray-multiwan`.
+Substitute your own values:
+- `<code>`      — short exit name (wan4)
+- `<IP>`        — macvlan address in the PARENT_IF subnet (192.168.0.104)
+- `<fwmark>`    — next free mark (100, 101, ... → 103)
+- `<upstream>`  — the receiving node's address (node4.example.com)
+- `<tun>`       — tun device name (tunwan4)
+
+The project is assumed to live in `/opt/xray-multiwan`.
 
 ---
 
-## Перед началом: собрать данные
+## Before you start: gather the data
 
-Текущие интерфейсы и какой номер fwmark/IP свободен:
+Current interfaces and which fwmark/IP are free:
 
 ```bash
 ip -4 -br addr show | grep xray-
@@ -25,139 +30,140 @@ grep via_ /etc/iproute2/rt_tables
 sed -n '/^EXITS=/,/^)/p' /opt/xray-multiwan/config.sh
 ```
 
-Определи:
-- свободный IP в подсети (по порядку после существующих)
-- свободный fwmark (по порядку: fr=100, se=101, fi=102, ru=103 → pl=104)
-- имя parent-интерфейса (на этом хосте — `global`, маска `/28`)
+Determine:
+- a free IP in the subnet (next after the existing ones)
+- a free fwmark (in order: wan1=100, wan2=101, wan3=102 → wan4=103)
+- the parent interface name and prefix (from `config.sh`: `PARENT_IF`, `NETMASK_BITS`)
 
-UUID и WS-path берутся из настроек ноды на принимающей стороне
-(панель 3x-ui на мастере). Они уникальны для каждой ноды.
+The UUID / transport parameters come from the receiving node's settings — they
+are unique per node.
 
 ---
 
-## Шаг 1. Конфиг xray для нового выхода
+## Step 1. xray config for the new exit
 
-Скопировать с рабочего выхода (например fr) и поменять поля.
-Если готовишь вручную — структура должна быть как у fr.json,
-с заменами:
-- `inbounds[].listen`           → `<IP>`           (172.31.254.25)
-- `outbounds[].tag`             → `<code>-...`     (pl-war)
-- `outbounds[].settings.vnext[].address` → `<upstream>` (pl-war.netadm.pro)
-- `outbounds[].settings.vnext[].users[].id` → UUID ноды
-- `streamSettings.wsSettings.path` → WS-path ноды
-- `streamSettings.wsSettings.headers.Host` → `<upstream>`
-- `streamSettings.tlsSettings.serverName`  → `<upstream>`
-- `routing.rules[].outboundTag` (последнее правило) → `<code>-...`
-- лог-файлы (`<code>-access.log`, `<code>-error.log`)
+Copy it from a working exit (e.g. wan1) and change the fields. If writing it by
+hand, keep the same structure as `wan1.json`, replacing:
+- `inbounds[].listen`           → `<IP>`           (192.168.0.104)
+- `outbounds[].tag`             → `<code>-...`
+- `outbounds[].settings.vnext[].address` → `<upstream>` (node4.example.com)
+- `outbounds[].settings.vnext[].users[].id` → node UUID
+- transport-specific fields (path / Host / serverName) → node values
+- `routing.rules[].outboundTag` (last rule) → `<code>-...`
+- log files (`<code>-access.log`, `<code>-error.log`)
 
-Файл: `/etc/xray/<code>.json`
+File: `/etc/xray/<code>.json`
 
-Проверить ключевые поля:
+Check the key fields:
 
 ```bash
-grep -E '"listen"|"address"|"id"|"path"|"Host"|"serverName"|"tag"' /etc/xray/pl.json
+grep -E '"listen"|"address"|"id"|"path"|"Host"|"serverName"|"tag"' /etc/xray/wan4.json
 ```
 
 ---
 
-## Шаг 2. Конфиг tun2socks для нового выхода
+## Step 2. tun2socks config for the new exit
 
 ```bash
-cat > /etc/tun2socks/pl.yaml <<'EOF'
-proxy: socks5://172.31.254.25:10808
-device: tunpl
+cat > /etc/tun2socks/wan4.yaml <<'EOF'
+proxy: socks5://192.168.0.104:10808
+device: tunwan4
 mtu: 1500
 loglevel: info
 EOF
 ```
 
-(socks-адрес = `<IP>:10808` — это inbound нового xray; device = `<tun>`)
+(socks address = `<IP>:10808` — the new xray inbound; device = `<tun>`)
 
 ---
 
-## Шаг 3. Добавить таблицу маршрутизации
+## Step 3. Add the routing table
 
 ```bash
-# проверить, что номер свободен:
-grep -E '^\s*104\s' /etc/iproute2/rt_tables && echo "ЗАНЯТ" || echo "свободен"
-# добавить:
-echo "104 via_pl" >> /etc/iproute2/rt_tables
+# check the number is free:
+grep -E '^\s*103\s' /etc/iproute2/rt_tables && echo "TAKEN" || echo "free"
+# add it:
+echo "103 via_wan4" >> /etc/iproute2/rt_tables
 grep via_ /etc/iproute2/rt_tables
 ```
 
+(`install.sh` also adds this line, but adding it up front keeps the dry-run tidy.)
+
 ---
 
-## Шаг 4. Добавить выход в config.sh
+## Step 4. Add the exit to config.sh
 
 ```bash
 cd /opt/xray-multiwan
 cp config.sh config.sh.bak.$(date +%H%M%S)
 
-# добавить строку pl после ru (формат: code:IP:fwmark):
-sed -i 's#    "ru:172.31.254.24:103"#    "ru:172.31.254.24:103"\n    "pl:172.31.254.25:104"#' config.sh
+# add the wan4 line (format: code:IP:fwmark):
+sed -i 's#    "wan3:192.168.0.103:102"#    "wan3:192.168.0.103:102"\n    "wan4:192.168.0.104:103"#' config.sh
 
 sed -n '/^EXITS=/,/^)/p' config.sh
 bash -n config.sh && echo "Syntax OK"
 ```
 
-Примечание: на этом хосте EXITS без MAC (формат из 3 полей).
-Если на хосте используется фиксированный MAC (4-е поле) — добавляй
-с MAC: `"pl:172.31.254.25:104:02:xx:xx:xx:xx:xx"`.
+Note: if the host pins MAC addresses (a 4th field), add it with the MAC:
+`"wan4:192.168.0.104:103:02:00:00:00:01:04"`.
 
 ---
 
-## Шаг 5. Проверить предусловия
+## Step 5. Verify the preconditions
 
 ```bash
-ls -l /etc/xray/pl.json /etc/tun2socks/pl.yaml
-grep via_pl /etc/iproute2/rt_tables
-grep 'pl:172.31.254.25' /opt/xray-multiwan/config.sh
+ls -l /etc/xray/wan4.json /etc/tun2socks/wan4.yaml
+grep via_wan4 /etc/iproute2/rt_tables
+grep 'wan4:192.168.0.104' /opt/xray-multiwan/config.sh
 ```
 
-Всё должно быть на месте.
+Everything should be in place.
 
 ---
 
-## Шаг 6. Dry-run и установка
+## Step 6. Dry-run and install
 
 ```bash
 cd /opt/xray-multiwan
-# посмотреть, что будет сделано:
-bash install.sh --install --dry-run 2>&1 | grep -E 'xray-pl|tunpl|via_pl|172.31.254.25|mark 104'
+# see what will happen:
+bash install.sh --install --dry-run 2>&1 | grep -E 'wan4|192.168.0.104|103'
 
-# применить (ВНИМАНИЕ: короткий разрыв 2-5с на работающих туннелях —
-# install.sh рестартует все xray/tun2socks и делает iptables -F mangle):
+# apply (NOTE: a short 2-5s drop on running tunnels — install.sh restarts all
+# xray/tun2socks and does iptables -F mangle):
 bash install.sh --install
 ```
 
 ---
 
-## Шаг 7. Проверка
+## Step 7. Check
 
 ```bash
 bash diag.sh
 ```
 
-Ожидается: новый выход во всех секциях (via_pl, mangle mark 104,
-NAT tunpl) и в connectivity-check `xray-pl (socks ...:10808) → <exit-IP>`.
-Должно быть `FAIL: 0`.
+Expected: the new exit in every section (via_wan4, mangle mark 103, NAT tunwan4)
+and in the connectivity check `xray-wan4 (socks ...:10808) → <exit-IP>`.
+`FAIL: 0` is the goal.
 
-Предупреждение `! exit IPs repeat` — нормально, если выход через
-tier-failover ведёт на ту же ноду, что другой выход.
+A `! exit IPs repeat` warning is fine if the exit lands on the same upstream as
+another one (e.g. via failover).
 
 ---
 
-## Откат (если что-то пошло не так)
+## Rollback (if something went wrong)
+
+Because the setup scripts are config-driven, removing the exit is just the
+reverse: drop its line from `config.sh` and re-apply (or reboot) — the stale
+macvlan, routes, ip-rules, mangle marks and NAT are cleaned up automatically.
 
 ```bash
-# вернуть config.sh:
+# restore config.sh (or delete just the wan4 line):
 cp /opt/xray-multiwan/config.sh.bak.<timestamp> /opt/xray-multiwan/config.sh
-# убрать таблицу:
-sed -i '/^104 via_pl$/d' /etc/iproute2/rt_tables
-# остановить и выключить инстансы:
-systemctl disable --now xray@pl tun2socks@pl
-# убрать конфиги:
-rm -f /etc/xray/pl.json /etc/tun2socks/pl.yaml
-# перенакатить без pl:
+# remove the routing table line:
+sed -i '/^103 via_wan4$/d' /etc/iproute2/rt_tables
+# remove the per-exit configs:
+rm -f /etc/xray/wan4.json /etc/tun2socks/wan4.yaml
+# re-apply without wan4 (stops+disables xray@wan4/tun2socks@wan4, drops its
+# interface/routes/NAT); a reboot would do the same:
 cd /opt/xray-multiwan && bash install.sh --install
 ```

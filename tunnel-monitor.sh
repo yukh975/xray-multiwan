@@ -17,7 +17,7 @@ TG_CHAT_ID=""
 PRIMARY_SOCKS=""
 ALERT_MODE="always"
 RESTART_WAIT=10
-CHECK_URLS="https://ifconfig.me/ip https://netadm.pro/ip"
+CHECK_URLS="https://ifconfig.me/ip https://api.ipify.org"
 SOCKS_PORT=10808
 
 [ -f "$CONFIG_SH" ] || { echo "no config.sh"; exit 1; }

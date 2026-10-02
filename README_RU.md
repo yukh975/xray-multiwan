@@ -207,6 +207,8 @@ systemctl daemon-reload
 
 Чтобы macvlan поднимался при каждой загрузке:
 
+> **Примечание:** в репозитории есть config-driven [`setup-macvlan.sh`](setup-macvlan.sh) и [`setup-routing.sh`](setup-routing.sh), которые читают `EXITS` из `config.sh` в рантайме — именно их ставит `install.sh`. Inline-версии ниже — минимальная иллюстрация «собрать руками» с впечатанным списком выходов; годится для понимания, но лучше использовать `install.sh`, чтобы добавление/удаление выхода оставалось правкой только `config.sh`.
+
 ```bash
 cat > /usr/local/sbin/setup-macvlan.sh <<'EOF'
 #!/bin/bash
@@ -519,31 +521,34 @@ bash install.sh --install --dry-run
 
 В этом режиме скрипт показывает все команды, которые он выполнил бы, и содержимое всех файлов, которые он создал бы, — но реальных изменений в системе не делает. Проверки предусловий (наличие интерфейса, tun2socks, конфигов, xray-юнитов) выполняются как обычно — dry-run имеет смысл запускать там, где система уже готова.
 
-Если нужно поменять список выходов — отредактируй массив `EXITS` в [`config.sh`](config.sh) и запусти `install.sh` заново. Скрипт перенастроит всё, включая удаление правил для выходов, которых больше нет, только для тех артефактов, которые он контролирует (скрипты, юниты, mangle-правила — они полностью перегенерируются).
+Если нужно поменять список выходов — отредактируй массив `EXITS` в [`config.sh`](config.sh) и запусти `install.sh` заново (или просто перезагрузись). `setup-macvlan.sh` и `setup-routing.sh` — **config-driven**: они читают `EXITS` из `config.sh` в рантайме и приводят живое состояние к нему. Поэтому уменьшение списка чистое — у убранного выхода сносятся macvlan-интерфейс, маршруты, `ip rule`, mangle-метка и NAT, а его сервисы `xray@<код>` / `tun2socks@<код>` останавливаются и выключаются. Руками ничего делать не нужно.
 
-**Что НЕ удалится автоматически при уменьшении списка выходов:**
-
-- Старые macvlan-интерфейсы (нужно `ip link del xray-<код>` вручную).
-- Старые записи в `/etc/iproute2/rt_tables` (безвредны, но можно почистить).
-- Старые включённые сервисы `xray@<код>` и `tun2socks@<код>` — их нужно `systemctl disable --now` вручную.
+Единственное, что остаётся, — безвредная неиспользуемая строка `via_<код>` в `/etc/iproute2/rt_tables`; при желании убери её вручную.
 
 ## Добавление нового выхода
 
-Чтобы добавить четвёртый выход (код `wan4`, IP `.235`, tun `tunwan4`, xray socks5 на `.235:10808`):
+Раз setup-скрипты config-driven, добавление выхода — это просто: создать его
+per-exit конфиги и дописать его в `EXITS`. Чтобы добавить четвёртый выход (код
+`wan4`, IP `192.168.0.104`, tun `tunwan4`, xray socks5 на `192.168.0.104:10808`):
 
-1. Подготовить конфиг xray для `xray@wan4` и конфиг `/etc/tun2socks/nl.yaml`.
-2. Добавить `103 via_wan4` в `/etc/iproute2/rt_tables`.
-3. В `/usr/local/sbin/setup-macvlan.sh` добавить `setup_iface xray-wan4 192.168.0.235`.
-4. В `/usr/local/sbin/setup-routing.sh`:
-   - Добавить `ip route replace default dev tunwan4 table via_wan4` в блоке default'ов.
-   - Добавить `"103:via_wan4"` в цикл `ip rule`.
-   - Добавить `iptables -t mangle -A PREROUTING -i xray-wan4 -j MARK --set-mark 103`.
-   - Добавить `tunwan4` и `xray-wan4` в циклы NAT и rp_filter.
-5. В `setup-macvlan.service` добавить `tun2socks@wan4.service xray@wan4.service` в `Before=`.
-6. В `setup-routing.service` добавить `tun2socks@wan4.service xray@wan4.service` в `After=`.
-7. Включить и запустить: `systemctl enable --now xray@wan4 tun2socks@wan4`, потом `systemctl restart setup-routing.service`.
+1. Подготовить per-exit конфиги: `/etc/xray/wan4.json` (xray inbound на новом IP
+   плюс outbound до ноды) и `/etc/tun2socks/wan4.yaml`.
+2. Добавить `103 via_wan4` в `/etc/iproute2/rt_tables` (необязательно — `install.sh` добавит и сам).
+3. Дописать выход в массив `EXITS` в [`config.sh`](config.sh): `"wan4:192.168.0.104:103"`.
+4. Запустить `install.sh --install` (идемпотентно). Config-driven setup-скрипты
+   подхватят новый выход, включат его сервисы и настроят маршрутизацию;
+   перезагрузка сделала бы то же самое.
 
-Либо проще: добавить новый выход в массив `EXITS` в [`config.sh`](config.sh) и запустить `install.sh` заново — он идемпотентен и перенастроит всё с учётом нового выхода.
+Подробный разбор — в [ADD-EXIT.md](ADD-EXIT.md).
+
+### Удаление выхода
+
+Убери строку выхода из `EXITS` в [`config.sh`](config.sh) и запусти `install.sh`
+заново (или перезагрузись). Всё, что относится к выходу — macvlan, маршруты,
+`ip rule`, mangle-метка, NAT и сервисы `xray@/tun2socks@` — удалится
+автоматически. При желании убери его строку `via_<код>` из
+`/etc/iproute2/rt_tables` и его конфиги `/etc/xray/<код>.json` /
+`/etc/tun2socks/<код>.yaml`.
 
 ## Миграция на новую адресацию
 

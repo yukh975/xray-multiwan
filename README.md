@@ -207,6 +207,8 @@ systemctl daemon-reload
 
 So macvlan interfaces come back on every boot:
 
+> **Note:** the repo ships config-driven [`setup-macvlan.sh`](setup-macvlan.sh) and [`setup-routing.sh`](setup-routing.sh) that read `EXITS` from `config.sh` at runtime — those are what `install.sh` installs. The inline versions below are a minimal, hand-built illustration with the exit list hard-coded; fine for learning, but prefer `install.sh` so that adding or removing an exit stays a `config.sh`-only change.
+
 ```bash
 cat > /usr/local/sbin/setup-macvlan.sh <<'EOF'
 #!/bin/bash
@@ -519,31 +521,33 @@ bash install.sh --install --dry-run
 
 In dry-run mode the script prints every command it would execute and every file it would create, without making any real changes. Preconditions (interface presence, tun2socks, configs, xray units) are still checked — dry-run only makes sense on an already-prepared system.
 
-To change the exit list, edit the `EXITS` array in [`config.sh`](config.sh) and re-run `install.sh` — it's idempotent and will reconfigure everything (including mangle rules), but only for artifacts it manages (scripts, units, and mangle rules are fully regenerated).
+To change the exit list, edit the `EXITS` array in [`config.sh`](config.sh) and re-run `install.sh` (or just reboot). `setup-macvlan.sh` and `setup-routing.sh` are **config-driven**: they read `EXITS` from `config.sh` at runtime and reconcile the live state to it. So shrinking the list is clean — a removed exit's macvlan interface, routes, `ip rule`, mangle mark and NAT are torn down, and its `xray@<code>` / `tun2socks@<code>` services are stopped and disabled, with no manual steps.
 
-**What does NOT get cleaned up automatically when shrinking the exit list:**
-
-- Orphaned macvlan interfaces (remove manually with `ip link del xray-<code>`).
-- Stale entries in `/etc/iproute2/rt_tables` (harmless, but can be cleaned up).
-- Previously-enabled `xray@<code>` and `tun2socks@<code>` services — disable them manually with `systemctl disable --now`.
+The only thing left behind is the (harmless, unused) `via_<code>` line in `/etc/iproute2/rt_tables`; drop it by hand if you like.
 
 ## Adding a new exit
 
-To add a fourth exit (code `wan4`, IP `.235`, tun `tunwan4`, xray socks5 on `.235:10808`):
+Because the setup scripts are config-driven, adding an exit is just: create its
+per-exit configs, then add it to `EXITS`. To add a fourth exit (code `wan4`,
+IP `192.168.0.104`, tun `tunwan4`, xray socks5 on `192.168.0.104:10808`):
 
-1. Prepare an xray config for `xray@wan4` and `/etc/tun2socks/nl.yaml`.
-2. Add `103 via_wan4` to `/etc/iproute2/rt_tables`.
-3. In `/usr/local/sbin/setup-macvlan.sh` add `setup_iface xray-wan4 192.168.0.235`.
-4. In `/usr/local/sbin/setup-routing.sh`:
-   - Add `ip route replace default dev tunwan4 table via_wan4` to the default-route block.
-   - Add `"103:via_wan4"` to the `ip rule` loop.
-   - Add `iptables -t mangle -A PREROUTING -i xray-wan4 -j MARK --set-mark 103`.
-   - Add `tunwan4` and `xray-wan4` to the NAT and rp_filter loops.
-5. In `setup-macvlan.service` add `tun2socks@wan4.service xray@wan4.service` to `Before=`.
-6. In `setup-routing.service` add `tun2socks@wan4.service xray@wan4.service` to `After=`.
-7. Enable and start: `systemctl enable --now xray@wan4 tun2socks@wan4`, then `systemctl restart setup-routing.service`.
+1. Prepare the per-exit configs: `/etc/xray/wan4.json` (xray inbound on the new
+   IP plus the outbound to the node) and `/etc/tun2socks/wan4.yaml`.
+2. Add `103 via_wan4` to `/etc/iproute2/rt_tables` (optional — `install.sh` adds it too).
+3. Add the entry to the `EXITS` array in [`config.sh`](config.sh): `"wan4:192.168.0.104:103"`.
+4. Run `install.sh --install` (idempotent). The config-driven setup scripts pick
+   up the new exit, enable its services and wire up routing; a reboot would do the same.
 
-Or — simpler — add the new entry to the `EXITS` array in [`config.sh`](config.sh) and re-run `install.sh`. It's idempotent and will reconfigure everything including the new exit.
+See [ADD-EXIT.md](ADD-EXIT.md) for the detailed walkthrough.
+
+### Removing an exit
+
+Delete the exit's line from `EXITS` in [`config.sh`](config.sh) and re-run
+`install.sh` (or reboot). Everything belonging to that exit — macvlan, routes,
+`ip rule`, mangle mark, NAT and the `xray@/tun2socks@` services — is removed
+automatically. Optionally drop its `via_<code>` line from
+`/etc/iproute2/rt_tables` and its `/etc/xray/<code>.json` /
+`/etc/tun2socks/<code>.yaml` configs.
 
 ## Migration to a new address plan
 

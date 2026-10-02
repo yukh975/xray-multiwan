@@ -385,7 +385,7 @@ check_tunnels() {
     fi
 
     local ips=()
-    local check_urls=("https://ifconfig.me/ip" "https://netadm.pro/ip" "https://api.ipify.org")
+    local check_urls=("https://ifconfig.me/ip" "https://api.ipify.org" "https://icanhazip.com")
     for item in "${EXITS[@]}"; do
         local code ip
         code=$(echo "$item" | cut -d: -f1)
