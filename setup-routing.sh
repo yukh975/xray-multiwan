@@ -18,6 +18,15 @@ for item in "${EXITS[@]}"; do
     MARKS+=("$(echo "$item" | cut -d: -f3)")
 done
 
+# Register each configured routing table name (ip uses NAMED tables, so a newly
+# added exit needs its "<mark> via_<code>" line in rt_tables). Idempotent; added
+# here so adding an exit is a config.sh-only change (no install.sh needed).
+for i in "${!CODES[@]}"; do
+    tbl="via_${CODES[$i]}"; m="${MARKS[$i]}"
+    grep -qE "^[[:space:]]*${m}[[:space:]]+${tbl}([[:space:]]|$)" /etc/iproute2/rt_tables 2>/dev/null \
+        || echo "${m} ${tbl}" >> /etc/iproute2/rt_tables
+done
+
 # Wait for the configured tun interfaces to appear (up to 30s each).
 for c in "${CODES[@]}"; do
     for _ in $(seq 1 30); do ip link show "tun${c}" &>/dev/null && break; sleep 1; done

@@ -424,8 +424,12 @@ What it does on each run:
 1. Reads exits from `config.sh` (`EXITS` array).
 2. Checks each exit through its SOCKS5 (`<IP>:10808`), requesting the
    IP via the `CHECK_URLS` list (tried in order).
-3. If an exit does not respond — restarts `xray@<code>` and
-   `tun2socks@<code>`, waits `RESTART_WAIT` seconds, re-checks.
+3. If an exit fails `CHECK_ROUNDS` checks in a row (`ROUND_PAUSE`
+   seconds apart) — restarts `xray@<code>` and `tun2socks@<code>`,
+   waits `RESTART_WAIT` seconds, re-checks. A single failed check is not
+   a failure: the path to a particular exit may lose some new
+   connections, and a restart does not fix that — the next connection
+   goes through anyway. Such retries are logged as `RETRY`, no alert.
 4. Sends a Telegram alert (`ALERT_MODE`: `always` — on every failure,
    even if the restart fixed it; `on_fail` — only if it did not).
 5. Logs the result to `tunnel-monitor.log`.
@@ -459,6 +463,8 @@ systemd units with the correct path, and enables the timer (runs hourly).
 | `PRIMARY_SOCKS` | External SOCKS for delivery (tried first; empty — local exits only) |
 | `ALERT_MODE` | `always` or `on_fail` |
 | `RESTART_WAIT` | Pause after restart before re-check (sec) |
+| `CHECK_ROUNDS` | Failed checks in a row before an exit is considered down (default 3) |
+| `ROUND_PAUSE` | Pause between those checks (sec, default 5) |
 | `CHECK_URLS` | URLs to verify an exit (tried in order) |
 | `SOCKS_PORT` | Local exits SOCKS5 port (usually 10808) |
 
@@ -527,16 +533,20 @@ The only thing left behind is the (harmless, unused) `via_<code>` line in `/etc/
 
 ## Adding a new exit
 
-Because the setup scripts are config-driven, adding an exit is just: create its
-per-exit configs, then add it to `EXITS`. To add a fourth exit (code `wan4`,
-IP `192.168.0.104`, tun `tunwan4`, xray socks5 on `192.168.0.104:10808`):
+The setup scripts are config-driven, so adding an exit is: create its two
+per-exit configs, add it to `EXITS`, and **reboot** (or run `install.sh --install`).
+Everything else — the `via_<code>` routing table, macvlan interface, routes,
+`ip rule`, mangle mark, NAT, and starting its `xray@/tun2socks@` services — is
+done automatically.
 
-1. Prepare the per-exit configs: `/etc/xray/wan4.json` (xray inbound on the new
-   IP plus the outbound to the node) and `/etc/tun2socks/wan4.yaml`.
-2. Add `103 via_wan4` to `/etc/iproute2/rt_tables` (optional — `install.sh` adds it too).
-3. Add the entry to the `EXITS` array in [`config.sh`](config.sh): `"wan4:192.168.0.104:103"`.
-4. Run `install.sh --install` (idempotent). The config-driven setup scripts pick
-   up the new exit, enable its services and wire up routing; a reboot would do the same.
+To add a fourth exit (code `wan4`, IP `192.168.0.104`, tun `tunwan4`, xray socks5
+on `192.168.0.104:10808`):
+
+1. Create the per-exit configs — these carry the node's secrets, so they are the
+   only hand-written part: `/etc/xray/wan4.json` (xray inbound on the new IP plus
+   the outbound to the node) and `/etc/tun2socks/wan4.yaml`.
+2. Add the entry to the `EXITS` array in [`config.sh`](config.sh): `"wan4:192.168.0.104:103"`.
+3. Reboot — or run `install.sh --install` to apply without a reboot.
 
 See [ADD-EXIT.md](ADD-EXIT.md) for the detailed walkthrough.
 

@@ -65,10 +65,15 @@ for ifc in $(ip -o link show type macvlan 2>/dev/null | awk -F': ' '{print $2}' 
     esac
 done
 
-# Reconcile per-exit services with config: enable the configured ones,
+# Reconcile per-exit services with config: enable+start the configured ones,
 # stop+disable any xray@/tun2socks@ instance that is no longer listed.
+# --no-block: this runs as a boot oneshot ordered Before= the configured units,
+# so a blocking start would deadlock; --no-block just queues them. A newly added
+# exit (not yet in any ordering) is started here, so "add = config.sh + reboot".
 for code in ${WANT_CODES}; do
     systemctl enable "xray@${code}.service" "tun2socks@${code}.service" >/dev/null 2>&1 || true
+    systemctl --no-block start "xray@${code}.service" >/dev/null 2>&1 || true
+    systemctl --no-block start "tun2socks@${code}.service" >/dev/null 2>&1 || true
 done
 for lnk in /etc/systemd/system/multi-user.target.wants/xray@*.service \
            /etc/systemd/system/multi-user.target.wants/tun2socks@*.service; do
