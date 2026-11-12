@@ -17,6 +17,8 @@ TG_CHAT_ID=""
 PRIMARY_SOCKS=""
 ALERT_MODE="always"
 RESTART_WAIT=10
+CHECK_ROUNDS=3    # выход упал, только если не ответил столько проверок подряд
+ROUND_PAUSE=5     # пауза между этими проверками, с
 CHECK_URLS="https://ifconfig.me/ip https://api.ipify.org"
 SOCKS_PORT=10808
 
@@ -41,6 +43,23 @@ check_exit() {
             echo "$out"
             return 0
         fi
+    done
+    return 1
+}
+
+# Проверка с повторами. Одиночный сбой — ещё не падение: дорога до отдельного
+# выхода бывает теряет часть новых соединений, и рестарт такой сбой не чинит —
+# следующее соединение проходит и без него. Выход считаем упавшим, только если
+# он не ответил CHECK_ROUNDS проверок подряд. Результат — в CHK_IP и CHK_TRIES.
+check_exit_retry() {
+    local socks="$1"
+    CHK_IP=""
+    CHK_TRIES=0
+    while [ "$CHK_TRIES" -lt "$CHECK_ROUNDS" ]; do
+        CHK_TRIES=$((CHK_TRIES + 1))
+        CHK_IP=$(check_exit "$socks") && return 0
+        CHK_IP=""
+        [ "$CHK_TRIES" -lt "$CHECK_ROUNDS" ] && sleep "$ROUND_PAUSE"
     done
     return 1
 }
@@ -174,7 +193,9 @@ main() {
         ip=$(echo "$item" | cut -d: -f2)
         socks="${ip}:${SOCKS_PORT}"
 
-        if ip_out=$(check_exit "$socks"); then
+        if check_exit_retry "$socks"; then
+            ip_out="$CHK_IP"
+            [ "$CHK_TRIES" -gt 1 ] && log "RETRY $code ($socks) — answered on check $CHK_TRIES/$CHECK_ROUNDS, no restart"
             log "OK   $code ($socks) -> $ip_out"
             vip_up "$code" "$ip"
             if [ "$(state_get "$code")" = "down" ]; then
@@ -184,13 +205,14 @@ main() {
             continue
         fi
 
-        # упал — рестарт
-        log "FAIL $code ($socks) — restarting xray@$code + tun2socks@$code"
+        # не ответил CHECK_ROUNDS проверок подряд — упал, рестарт
+        log "FAIL $code ($socks) — no answer on $CHECK_ROUNDS checks, restarting xray@$code + tun2socks@$code"
         systemctl restart "xray@${code}.service" 2>/dev/null
         systemctl restart "tun2socks@${code}.service" 2>/dev/null
         sleep "$RESTART_WAIT"
 
-        if ip_out=$(check_exit "$socks"); then
+        if check_exit_retry "$socks"; then
+            ip_out="$CHK_IP"
             log "RECOVERED $code ($socks) -> $ip_out after restart"
             vip_up "$code" "$ip"
             state_set "$code" up
